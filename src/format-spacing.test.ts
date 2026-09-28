@@ -60,6 +60,53 @@ describe('formatSpacing: 不该动的地方', () => {
   })
 })
 
+describe('formatSpacing: 中文与英文符号之间', () => {
+  it('英文 token 以符号结尾（. + _ # %）', () => {
+    expect(formatSpacing('使用Node.js开发')).toBe('使用 Node.js 开发')
+    expect(formatSpacing('C++版本')).toBe('C++ 版本')
+    expect(formatSpacing('x86_64架构')).toBe('x86_64 架构')
+    expect(formatSpacing('C#语言')).toBe('C# 语言')
+    expect(formatSpacing('完成度100%啦')).toBe('完成度 100% 啦')
+  })
+
+  it('英文 token 以符号开头（( [ $ - +）', () => {
+    expect(formatSpacing('主键(id)')).toBe('主键 (id)')
+    expect(formatSpacing('见[1]说明')).toBe('见 [1] 说明')
+    expect(formatSpacing('价格$100')).toBe('价格 $100')
+    expect(formatSpacing('温度-5度')).toBe('温度 -5 度')
+    expect(formatSpacing('选项+A参数')).toBe('选项 +A 参数')
+  })
+
+  it('括号里的英文两侧都补', () => {
+    expect(formatSpacing('中文(English)混排')).toBe('中文 (English) 混排')
+  })
+
+  it('符号两侧已有空格时不重复补', () => {
+    expect(formatSpacing('使用 Node.js 开发')).toBe('使用 Node.js 开发')
+    expect(formatSpacing('主键 (id)')).toBe('主键 (id)')
+  })
+})
+
+describe('formatSpacing: 符号不会误伤（保持原样）', () => {
+  it('中文里常用的半角标点 / 省略号 / 感叹号', () => {
+    for (const input of ['中文,English', '中文.内容', '他说...然后', '说明:内容', '中文!!!', '(中文)']) {
+      expect(formatSpacing(input), input).toBe(input)
+    }
+  })
+
+  it('斜杠 / 波浪号 / 连字号连接的中文', () => {
+    for (const input of ['读/写', '中文/English混排', '第一~五章', '中文--中文']) {
+      expect(formatSpacing(input), input).toBe(input)
+    }
+  })
+
+  it('Markdown / Logseq 强调符与标签', () => {
+    for (const input of ['**加粗**中文', '*斜体*文字', '~~删除~~中文', '^^高亮^^中文', '中文#话题']) {
+      expect(formatSpacing(input), input).toBe(input)
+    }
+  })
+})
+
 describe('formatSpacing: 受保护的语法片段', () => {
   it('行内代码：和中文相邻时补空格，内部不改写', () => {
     expect(formatSpacing('运行`npm run test`命令')).toBe('运行 `npm run test` 命令')
@@ -103,9 +150,9 @@ describe('formatSpacing: 受保护的语法片段', () => {
     )
   })
 
-  it('货币符号不会被配成公式', () => {
-    expect(formatSpacing('花费$100，后来$50买了个新的')).toBe('花费$100，后来$50 买了个新的')
-    expect(formatSpacing('价格是$5到$10之间')).toBe('价格是$5 到$10 之间')
+  it('货币符号不会被配成公式，但会按英文 token 补空格', () => {
+    expect(formatSpacing('花费$100，后来$50买了个新的')).toBe('花费 $100，后来 $50 买了个新的')
+    expect(formatSpacing('价格是$5到$10之间')).toBe('价格是 $5 到 $10 之间')
   })
 
   it('受保护片段的输出是幂等的', () => {
@@ -118,6 +165,10 @@ describe('formatSpacing: 受保护的语法片段', () => {
       '公式$x_1 + y_1$计算',
       'title:: 中文English',
       '这是 #标签 和 #tag',
+      '使用Node.js开发',
+      '中文(English)混排',
+      '读/写与中文,English',
+      '**加粗**中文',
     ]
 
     for (const input of inputs) {

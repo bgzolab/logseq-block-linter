@@ -2,9 +2,14 @@
  * 中英文空格格式化（纯函数，无副作用，方便单测）
  *
  * 规则：
- *  - CJK 字符 + 拉丁字母 / 数字 / `%` → 补一个空格
- *  - 拉丁字母 / 数字 / `%` + CJK 字符 → 补一个空格
- *  - 已有的空格保持不变（不会合并连续空格，函数是幂等的）
+ *  - 中文与「英文 token」之间补一个空格
+ *    - token = 连续的半角串（字母、数字、`+ - . _ / = ~` 等符号），以字母/数字或
+ *      `(` `[` `{` `$` `+` `-` 这类前缀符号开头，且至少含一个字母/数字
+ *    - 例：`使用API` → `使用 API`、`C++版本` → `C++ 版本`、`使用Node.js开发` → `使用 Node.js 开发`、
+ *      `主键(id)` → `主键 (id)`、`价格$100` → `价格 $100`
+ *  - 已有空格保持不变（不会合并连续空格，函数是幂等的）
+ *  - 纯符号（`--`、`...`、`**`、`~~`）和 `/` `&` `#` 这类连接符不会触发补空格，
+ *    所以 `读/写`、`中文,English`、`中文.内容`、`**加粗**`、`#标签` 都保持原样
  *
  * 受保护的区域（内部文本永远不会被改写）：
  *  - 代码块 ```...```、行内代码 `...`
@@ -24,20 +29,40 @@
 const CJK_CHARS =
   '\\u3005\\u3007\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uf900-\\ufaff'
 
-/** 会被补空格的拉丁字符 */
-const LATIN_CHARS = 'A-Za-z0-9%'
+/** 单词字符：字母和数字 */
+const WORD_CHARS = 'A-Za-z0-9'
+
+/**
+ * 「英文 token」里允许出现的半角符号。
+ *
+ * 逗号、句号、冒号、问号这些中文里也常用的标点放在这里，是因为它们
+ * 可以出现在 token 中间 / 结尾（`Node.js`、`C++`、`100%`、`README.md`），
+ * 但不能作为 token 开头——所以 `中文,English`、`中文.内容` 不会被误加空格。
+ */
+const TOKEN_BODY_SYMBOLS = '\\-_.+/=~^|&@$#%*<>(){}\\[\\]!?;:,\'"'
+
+/**
+ * 可以作为 token 开头的半角符号：中文紧跟「符号 + 英文」时也补空格，
+ * 例如 `主键(id)`、`价格$100`、`温度-5度`。
+ *
+ * 故意不含 `/`、`&`、`#` 这类连接符：`读/写`、`中文#话题`、`A&B` 不应该被拆开。
+ */
+const TOKEN_PREFIX_SYMBOLS = '([{<>=+\\-*_^~$@'
+
+/** 「英文 token」允许出现的任意字符 */
+const TOKEN_CHAR = new RegExp(`[${WORD_CHARS}${TOKEN_BODY_SYMBOLS}]`)
+/** 「英文 token」允许的开头字符 */
+const TOKEN_START = new RegExp(`[${WORD_CHARS}${TOKEN_PREFIX_SYMBOLS}]`)
+const HAS_WORD_CHAR = new RegExp(`[${WORD_CHARS}]`)
 
 /** 标签 `#tag` 中 `#` 之后允许出现的字符 */
-const TAG_CHARS = `${LATIN_CHARS.replace('%', '')}_${CJK_CHARS}/-`
+const TAG_CHARS = `${WORD_CHARS}_${CJK_CHARS}/-`
 
 /** URL 中允许出现的 ASCII 字符 */
 const URL_CHARS = 'A-Za-z0-9\\-._~:/?#\\[\\]@!$&\'()*+,;=%'
 
 /** URL 里的分隔符：中文只有紧跟在这些字符后面时才算 URL 的一部分 */
 const URL_SEP_CHARS = '/?&=#'
-
-const CJK_TO_LATIN = new RegExp(`([${CJK_CHARS}])([${LATIN_CHARS}])`, 'g')
-const LATIN_TO_CJK = new RegExp(`([${LATIN_CHARS}])([${CJK_CHARS}])`, 'g')
 
 const HAS_CJK = new RegExp(`[${CJK_CHARS}]`)
 const ENDS_WITH_CJK = new RegExp(`[${CJK_CHARS}]$`)
@@ -162,9 +187,54 @@ function tokenize(input: string): Token[] {
   return tokens
 }
 
-/** 只做「中英文之间补空格」，不碰其他任何字符 */
+/** 一段半角串是否算「英文 token」：以字母/数字（或 `(` `$` `+` 这类前缀符号）开头，且至少含一个字母/数字 */
+function isLatinToken(run: string): boolean {
+  const first = run[0]
+  return first !== undefined && TOKEN_START.test(first) && HAS_WORD_CHAR.test(run)
+}
+
+/**
+ * 在中文和「英文 token」之间补空格，不碰其他任何字符。
+ *
+ * 「英文 token」= 一段连续的半角串，以字母/数字（或前缀符号）开头、至少含一个字母/数字：
+ * `Node.js`、`C++`、`README.md`、`(id)`、`$100`、`x86_64`……
+ *
+ * 纯符号（`--`、`...`、`**`、`~~`）不算 token，所以中文标点、Markdown 强调符、
+ * 以及 `读/写` 这种「斜杠连接」都不会被拆开。函数是幂等的。
+ */
 function spacify(text: string): string {
-  return text.replace(CJK_TO_LATIN, '$1 $2').replace(LATIN_TO_CJK, '$1 $2')
+  let out = ''
+  let i = 0
+
+  while (i < text.length) {
+    const char = text[i] as string
+
+    if (!TOKEN_CHAR.test(char)) {
+      out += char
+      i += 1
+      continue
+    }
+
+    const start = i
+    while (i < text.length && TOKEN_CHAR.test(text[i] as string)) i += 1
+
+    const run = text.slice(start, i)
+
+    if (!isLatinToken(run)) {
+      out += run
+      continue
+    }
+
+    // 中文和英文 token 之间补空格
+    if (ENDS_WITH_CJK.test(out)) out += ' '
+
+    out += run
+
+    const next = text[i]
+    if (next !== undefined && HAS_CJK.test(next)) out += ' '
+  }
+
+  return out
 }
 
 /**

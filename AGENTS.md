@@ -40,6 +40,7 @@ Node 22（见 `.github/workflows/test.yml`）。**改完代码必须 `npm test` 
 5. `formatSpacing` 必须保持**幂等**（已有空格不动、不合并连续空格），且受保护片段（代码块 / 行内代码 / 双链 / 块引用 / Markdown 链接 / URL / 标签 / 属性名 / 公式）内部永不改写。改规则时同时补 `src/format-spacing.test.ts` 用例。
 6. 快捷键热更新依赖 Logseq 宿主**内部** API：`unregister_plugin_simple_command`（经 `logseq._execCallableAPIAsync`）。公开 API 没有 unregister，所以保留 try/catch 和「失败就降级为重新加载插件后生效」的行为，不要改成硬依赖。
 7. 设置变更必须保留**去抖 + 串行**（见 `src/main.ts` 的 `scheduleShortcutUpdate` / `queueShortcutUpdate`）：Logseq 的字符串设置每敲一个字符都会触发 `onSettingsChanged`，并发处理会重复注册同一个命令。
+8. 「英文 token」的符号集合（`src/format-spacing.ts` 的 `TOKEN_BODY_SYMBOLS` / `TOKEN_PREFIX_SYMBOLS`）是刻意收窄的启发式：token 必须**含至少一个字母/数字**，且 `,` `.` `:` `!` `?` 这类标点、`/` `&` `#` 这类连接符、`*` `~` `^` 这类强调符不能作为 token 的触发开头。放宽前先看 `src/format-spacing.test.ts` 里「符号不会误伤」的用例，否则 `读/写`、`中文,English`、`**加粗**`、`中文#话题` 会被破坏。
 
 ## 测试约定
 

@@ -32,11 +32,33 @@ describe('resolveShortcut', () => {
     expect(resolveShortcut({ shortcut: 'enter' })).toEqual({ binding: 'mod+s', invalid: 'enter' })
     expect(resolveShortcut({ shortcut: 's' })).toEqual({ binding: 'mod+s', invalid: 's' })
   })
+
+  it('只有 Shift 的快捷键同样会劫持输入（大写字母 / 符号）', () => {
+    expect(resolveShortcut({ shortcut: 'shift+s' })).toEqual({ binding: 'mod+s', invalid: 'shift+s' })
+    expect(resolveShortcut({ shortcut: 'shift+/' })).toEqual({ binding: 'mod+s', invalid: 'shift+/' })
+    expect(resolveShortcut({ shortcut: 'shift+space' })).toEqual({
+      binding: 'mod+s',
+      invalid: 'shift+space',
+    })
+  })
+
+  it('无效组合（只有修饰键 / 重复分段）也按非法处理', () => {
+    for (const value of ['ctrl', 'alt+option', 'mod+mod+s', 'ctrl+s+s']) {
+      expect(resolveShortcut({ shortcut: value }), value).toEqual({ binding: 'mod+s', invalid: value })
+    }
+  })
 })
 
 describe('isValidShortcut', () => {
-  it('带修饰键的写法合法', () => {
-    for (const value of ['mod+s', 'ctrl+shift+s', 'meta+enter', 'shift+/', 'alt+space', 'cmd+shift+k']) {
+  it('强修饰键 + 按键的写法合法', () => {
+    for (const value of [
+      'mod+s',
+      'ctrl+shift+s',
+      'meta+enter',
+      'alt+space',
+      'cmd+shift+k',
+      'shift+f5',
+    ]) {
       expect(isValidShortcut(value), value).toBe(true)
     }
   })
@@ -49,6 +71,18 @@ describe('isValidShortcut', () => {
 
   it('没有修饰键的普通按键不合法', () => {
     for (const value of ['space', 'enter', 's', '1', 'f13']) {
+      expect(isValidShortcut(value), value).toBe(false)
+    }
+  })
+
+  it('只有 Shift 的组合不合法', () => {
+    for (const value of ['shift+s', 'shift+1', 'shift+/', 'shift+space', 'shift+enter']) {
+      expect(isValidShortcut(value), value).toBe(false)
+    }
+  })
+
+  it('只有修饰键或分段重复的写法不合法', () => {
+    for (const value of ['ctrl', 'alt+option', 'shift', 'mod+mod+s', 'ctrl+s+s', 'ctrl+ctrl']) {
       expect(isValidShortcut(value), value).toBe(false)
     }
   })

@@ -95,6 +95,14 @@ describe('formatSpacing: 受保护的语法片段', () => {
     expect(formatSpacing('公式$x_1 + y_1$计算')).toBe('公式 $x_1 + y_1$ 计算')
   })
 
+  it('显示公式 $$...$$ 内部不改写（含中文也是）', () => {
+    expect(formatSpacing('$$若x>0则y=f(x)成立$$')).toBe('$$若x>0则y=f(x)成立$$')
+    expect(formatSpacing('$$\\text{其中}x为正整数$$')).toBe('$$\\text{其中}x为正整数$$')
+    expect(formatSpacing('公式$$\\text{其中}x为正整数$$成立')).toBe(
+      '公式 $$\\text{其中}x为正整数$$ 成立'
+    )
+  })
+
   it('货币符号不会被配成公式', () => {
     expect(formatSpacing('花费$100，后来$50买了个新的')).toBe('花费$100，后来$50 买了个新的')
     expect(formatSpacing('价格是$5到$10之间')).toBe('价格是$5 到$10 之间')

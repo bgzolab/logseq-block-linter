@@ -11,7 +11,7 @@
  *  - 双链 [[...]]、块引用 ((...))
  *  - Markdown 链接 / 图片 [text](url)
  *  - 裸 URL（http/https）
- *  - 行内公式 $...$ / $$...$$（含中文的内容不当公式，避免把货币符号配成对）
+ *  - 公式 `$$...$$` / `$...$`（行内公式里含中文时不视为公式，避免把货币符号配成对）
  *  - 标签 #tag
  *  - 行首属性 key::
  *
@@ -141,9 +141,9 @@ function tokenize(input: string): Token[] {
       const m = rule.pattern.exec(input)
       if (!m || m[0].length === 0) continue
 
-      // 含中文的 $...$ 更可能是货币符号或正文（`花费$100，后来$50`），
-      // 别当公式吞掉
-      if (rule.kind === 'math' && HAS_CJK.test(m[0])) continue
+      // 含中文的行内 $...$ 更可能是货币符号或正文（`花费$100，后来$50`），
+      // 别当公式吞掉；`$$...$$` 是显示公式，含中文也照常保护
+      if (rule.kind === 'math' && !m[0].startsWith('$$') && HAS_CJK.test(m[0])) continue
 
       const end =
         rule.kind === 'url' ? extendUrlToken(input, i + m[0].length) : i + m[0].length

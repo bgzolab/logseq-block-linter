@@ -31,8 +31,8 @@ export const settingsSchema: SettingSchemaDesc[] = [
     title: '快捷键',
     description:
       'mod+s = Windows / Linux 的 Ctrl+S，macOS 的 Cmd+S（mod = ⌘ / Ctrl）。' +
-      '也可以写 ctrl+alt+s、mod+shift+s 等组合键（必须带修饰键，避免劫持正常输入），' +
-      '修改后立即生效，无需重启 Logseq。',
+      '也可以写 ctrl+alt+s、mod+shift+s 等组合键（必须带 ⌘ / Ctrl / Alt，' +
+      '避免劫持正常输入），修改后立即生效，无需重启 Logseq。',
   },
 ]
 
@@ -53,26 +53,48 @@ const MODIFIER_KEYS = new Set([
   'shift',
 ])
 
+/**
+ * 可以和 `shift` 搭配、但单独使用仍会劫持输入的修饰键。
+ *
+ * Shift 是打字时唯一会一直按住的修饰键（大写字母、`?`、`!`、`@`……），
+ * 所以 `shift+s` 这种「Shift + 可输入字符」和裸键一样危险。
+ */
+const STRONG_MODIFIER_KEYS = new Set([...MODIFIER_KEYS].filter((key) => key !== 'shift'))
+
 /** 功能键（即使没有修饰键也不会劫持普通输入） */
 const FUNCTION_KEY_PATTERN = /^f([1-9]|1[0-2])$/
 
 /**
  * 是否是一个能交给 Logseq 的快捷键写法。
  *
- * 必须带修饰键（或单独的功能键）：插件是以 `mode: 'global'` 注册的，
- * 单个字母 / `space` / `enter` 会在用户打字时劫持输入。
+ * 插件以 `mode: 'global'` 注册，所以要求：
+ *  - 「非 Shift 修饰键 + 一个按键」，例如 `mod+s` / `ctrl+shift+s` / `alt+space`
+ *  - 或者单独的功能键，例如 `f5`
+ *
+ * 裸键（`s` / `space`）、纯 Shift（`shift+s`）、只有修饰键（`ctrl`）、
+ * 重复分段（`ctrl+s+s`）都会被拒绝，避免劫持正常输入或注册出无效快捷键。
  */
 export function isValidShortcut(shortcut: string): boolean {
   if (!SHORTCUT_PATTERN.test(shortcut)) return false
-  if (shortcut.startsWith('+') || shortcut.endsWith('+') || shortcut.includes('++')) return false
 
   const keys = shortcut.toLowerCase().split('+')
+
+  // `ctrl+`、`+s`、`ctrl++s` 会产生空分段
   if (keys.some((key) => key === '')) return false
 
-  const hasModifier = keys.some((key) => MODIFIER_KEYS.has(key))
-  const isFunctionKey = keys.length === 1 && FUNCTION_KEY_PATTERN.test(keys[0] ?? '')
+  // `mod+mod+s`、`ctrl+s+s`
+  if (new Set(keys).size !== keys.length) return false
 
-  return hasModifier || isFunctionKey
+  const modifiers = keys.filter((key) => MODIFIER_KEYS.has(key))
+  const others = keys.filter((key) => !MODIFIER_KEYS.has(key))
+
+  // 必须恰好有一个真正的按键
+  if (others.length !== 1) return false
+
+  const hasStrongModifier = modifiers.some((key) => STRONG_MODIFIER_KEYS.has(key))
+  const isFunctionKey = FUNCTION_KEY_PATTERN.test(others[0] ?? '')
+
+  return hasStrongModifier || isFunctionKey
 }
 
 export type ShortcutResolution = {

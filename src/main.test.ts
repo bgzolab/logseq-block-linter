@@ -197,6 +197,16 @@ describe('快捷键设置', () => {
     expect(lastPaletteCommand()?.opts.keybinding).toEqual({ binding: 'mod+s', mode: 'global' })
     expect(state.messages.at(-1)?.content).toContain('space')
   })
+
+  it('用户最终停在无效值（只有修饰键）时同样回退并提示', async () => {
+    await loadPlugin()
+    changeSettings({ shortcut: 'ctrl' })
+    await vi.waitFor(() => expect(state.messages).toHaveLength(1))
+
+    expect(lastPaletteCommand()?.opts.keybinding).toEqual({ binding: 'mod+s', mode: 'global' })
+    expect(state.messages.at(-1)?.status).toBe('warning')
+    expect(state.messages.at(-1)?.content).toContain('ctrl')
+  })
 })
 
 describe('格式化当前 block', () => {

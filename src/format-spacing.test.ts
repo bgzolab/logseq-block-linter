@@ -99,8 +99,13 @@ describe('formatSpacing: 中文与英文符号之间', () => {
     expect(formatSpacing('中文--中文')).toBe('中文 -- 中文')
     expect(formatSpacing('结果=答案')).toBe('结果 = 答案')
     expect(formatSpacing('烟&酒')).toBe('烟 & 酒')
-    expect(formatSpacing('左|右')).toBe('左 | 右')
     expect(formatSpacing('小明@小红')).toBe('小明 @ 小红')
+  })
+
+  it('表格分隔符 | 不参与（保持紧凑写法）', () => {
+    for (const input of ['|名称|数量|', '左|右']) {
+      expect(formatSpacing(input), input).toBe(input)
+    }
   })
 })
 
@@ -109,6 +114,12 @@ describe('formatSpacing: 受保护片段与英文 token 相邻', () => {
     expect(formatSpacing('运行`cmd`$100脚本')).toBe('运行 `cmd` $100 脚本')
     expect(formatSpacing('中文`x`$100中文')).toBe('中文 `x` $100 中文')
     expect(formatSpacing('中文[[Link]]English')).toBe('中文 [[Link]] English')
+  })
+
+  it('运算符与受保护片段相邻时两侧对称', () => {
+    expect(formatSpacing('中文-[[页面]]')).toBe('中文 - [[页面]]')
+    expect(formatSpacing('中文[[a]]-[[b]]')).toBe('中文 [[a]] - [[b]]')
+    expect(formatSpacing('中文+`code`+中文')).toBe('中文 + `code` + 中文')
   })
 
   it('括号里全是中文时不当成 token', () => {
@@ -130,8 +141,21 @@ describe('formatSpacing: 内联 HTML 标签', () => {
     expect(formatSpacing('第一行<br>第二行')).toBe('第一行 <br> 第二行')
   })
 
+  it('自闭合 / `>` 前有空格的标签也能识别', () => {
+    expect(formatSpacing('第一行<br />第二行')).toBe('第一行 <br /> 第二行')
+    expect(formatSpacing('第一行<br >第二行')).toBe('第一行 <br > 第二行')
+    expect(formatSpacing('第一行<br/>第二行')).toBe('第一行 <br/> 第二行')
+  })
+
+  it('引号没闭合的标签也不会被注入空格', () => {
+    expect(formatSpacing('<div title="中文>内容</div>文字')).toBe(
+      '<div title="中文> 内容 </div> 文字'
+    )
+  })
+
   it('比较表达式不会被当成标签', () => {
     expect(formatSpacing('若a<b且c>d')).toBe('若 a<b 且 c>d')
+    expect(formatSpacing('若a<b 且 c>d')).toBe('若 a<b 且 c>d')
   })
 
   it('属性值里的 > 不会截断标签', () => {
@@ -228,6 +252,14 @@ describe('formatSpacing: 受保护的语法片段', () => {
     expect(formatSpacing('花费$5,$10和更多')).toBe('花费 $5,$10 和更多')
   })
 
+  it('金额被空格 / 全角括号隔开时不会被拆碎', () => {
+    expect(formatSpacing('价格$5 $10之间')).toBe('价格 $5 $10 之间')
+    expect(formatSpacing('价格$5$6呢')).toBe('价格 $5$6 呢')
+    expect(formatSpacing('会员费$100 $200两档')).toBe('会员费 $100 $200 两档')
+    expect(formatSpacing('价格$5（$10）和更多')).toBe('价格 $5（$10）和更多')
+    expect(formatSpacing('公式$x $y$结束')).toBe('公式 $x $y$ 结束')
+  })
+
   it('TeX 公式（含中文）照常保护', () => {
     expect(formatSpacing('公式$\\text{中文是一个隐藏的公式}$结束')).toBe(
       '公式 $\\text{中文是一个隐藏的公式}$ 结束'
@@ -257,6 +289,15 @@ describe('formatSpacing: 受保护的语法片段', () => {
       '花费$5，$10和更多',
       '公式$\\text{中文}$结束',
       '中文`a``b`中文',
+      '价格$5 $10之间',
+      '价格$5$6呢',
+      '价格$5（$10）和更多',
+      '公式$x $y$结束',
+      '第一行<br />第二行',
+      '<div title="中文>内容</div>文字',
+      '中文[[a]]-[[b]]',
+      '中文+`code`+中文',
+      '|名称|数量|',
     ]
 
     for (const input of inputs) {

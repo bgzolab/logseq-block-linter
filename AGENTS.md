@@ -40,7 +40,7 @@ Node 22（见 `.github/workflows/test.yml`）。**改完代码必须 `npm test` 
 5. `formatSpacing` 必须保持**幂等**（已有空格不动、不合并连续空格），且受保护片段（代码块 / 行内代码 / 双链 / 块引用 / Markdown 链接 / URL / 标签 / 属性名 / 公式 / 内联 HTML 标签）内部永不改写。注意：HTML 标签只保证标签本身不被改写，标签**元素内部**的边界会补空格（`<u> 下划线 </u>`）；相邻的受保护片段之间不补空格。改规则时同时补 `src/format-spacing.test.ts` 用例。
 6. 快捷键热更新依赖 Logseq 宿主**内部** API：`unregister_plugin_simple_command`（经 `logseq._execCallableAPIAsync`）。公开 API 没有 unregister，所以保留 try/catch 和「失败就降级为重新加载插件后生效」的行为，不要改成硬依赖。
 7. 设置变更必须保留**去抖 + 串行**（见 `src/main.ts` 的 `scheduleShortcutUpdate` / `queueShortcutUpdate`）：Logseq 的字符串设置每敲一个字符都会触发 `onSettingsChanged`，并发处理会重复注册同一个命令。
-8. 「英文 token」的符号集合（`src/format-spacing.ts` 的 `TOKEN_BODY_SYMBOLS` / `TOKEN_PREFIX_SYMBOLS` / `OPERATOR_TOKEN`）是刻意收窄的启发式：token 必须**含至少一个字母/数字**（或整段都是 `+ - = / & | @` 这类运算 / 连接符号），纯符号串（`...`、`!!!`）不算；`,` `.` `:` `!` `?` 这类标点和 `#` `~` `^` 不能作为 token 的触发符号（`#` 是标签、`~`/`^`/`*` 是强调符）。强调符包住**英文**时两侧会补空格（`详见~~NOTE~~说明` → `详见 ~~NOTE~~ 说明`），包住中文时不会（`**加粗**中文` 保持原样）。内联 HTML 标签是受保护片段，改这块前先看 `src/format-spacing.test.ts` 里「符号不会误伤」「受保护片段与英文 token 相邻」「内联 HTML 标签」三组用例。
+8. 「英文 token」的符号集合（`src/format-spacing.ts` 的 `TOKEN_BODY_SYMBOLS` / `TOKEN_PREFIX_SYMBOLS` / `OPERATOR_SYMBOLS`）是刻意收窄的启发式：token 必须**含至少一个字母/数字**（或整段都是 `+ - = / & @` 这类运算 / 连接符号），纯标点串（`...`、`!!!`）不算；`,` `.` `:` `!` `?` 这类标点、`#`（标签）、`|`（表格）和 `~` `^` `*`（强调符）不能作为 token 的触发符号。强调符包住**英文**时两侧会补空格（`详见~~NOTE~~说明` → `详见 ~~NOTE~~ 说明`），包住中文时不会（`**加粗**中文` 保持原样）。内联 HTML 标签（含引号没闭合的写法）是受保护片段；单 `$...$` 走「货币 / 正文」启发式（见 `looksLikePlainDollarText`）。改这块前先看 `src/format-spacing.test.ts` 里「符号不会误伤」「受保护片段与英文 token 相邻」「内联 HTML 标签」「相邻的受保护片段」几组用例。
 
 ## 测试约定
 

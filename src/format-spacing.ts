@@ -207,8 +207,19 @@ function tokenize(input: string): Token[] {
   return tokens
 }
 
-/** 一段半角串是否算「英文 token」：以字母/数字（或 `(` `$` `+` 这类前缀符号）开头，且至少含一个字母/数字 */
+/**
+ * 可以单独成 token 的「运算 / 连接符号」：两侧是中文时也补空格，
+ * `焖面+烙饼` → `焖面 + 烙饼`、`读/写` → `读 / 写`。
+ *
+ * 故意不含容易误伤的符号：`*` `~` `^`（Markdown / Logseq 强调符）、`#`（标签）、
+ * `$` `%`（货币、百分比，通常跟着数字）、`.` `,` `:` `!` `?`（中文里常用的标点）。
+ */
+const OPERATOR_TOKEN = /^[+\-=/&|@]+$/
+
+/** 一段半角串是否算「英文 token」：纯运算符号，或以字母/数字（前缀符号）开头且含字母/数字 */
 function isLatinToken(run: string): boolean {
+  if (OPERATOR_TOKEN.test(run)) return true
+
   const first = run[0]
   return first !== undefined && TOKEN_START.test(first) && HAS_WORD_CHAR.test(run)
 }

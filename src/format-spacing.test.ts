@@ -91,6 +91,17 @@ describe('formatSpacing: 中文与英文符号之间', () => {
     expect(formatSpacing('联系@someone吧')).toBe('联系 @someone 吧')
     expect(formatSpacing('中文__bold__中文')).toBe('中文 __bold__ 中文')
   })
+
+  it('运算 / 连接符号单独出现在中文之间时补空格', () => {
+    expect(formatSpacing('焖面+烙饼+炒鸡蛋')).toBe('焖面 + 烙饼 + 炒鸡蛋')
+    expect(formatSpacing('读/写')).toBe('读 / 写')
+    expect(formatSpacing('中文-中文')).toBe('中文 - 中文')
+    expect(formatSpacing('中文--中文')).toBe('中文 -- 中文')
+    expect(formatSpacing('结果=答案')).toBe('结果 = 答案')
+    expect(formatSpacing('烟&酒')).toBe('烟 & 酒')
+    expect(formatSpacing('左|右')).toBe('左 | 右')
+    expect(formatSpacing('小明@小红')).toBe('小明 @ 小红')
+  })
 })
 
 describe('formatSpacing: 受保护片段与英文 token 相邻', () => {
@@ -145,8 +156,8 @@ describe('formatSpacing: 符号不会误伤（保持原样）', () => {
     }
   })
 
-  it('斜杠 / 波浪号 / 连字号连接的中文', () => {
-    for (const input of ['读/写', '中文/English混排', '第一~五章', '中文--中文']) {
+  it('斜杠连接英文、范围符号不动', () => {
+    for (const input of ['中文/English混排', '第一~五章']) {
       expect(formatSpacing(input), input).toBe(input)
     }
   })
@@ -241,6 +252,8 @@ describe('formatSpacing: 受保护的语法片段', () => {
       '<div title="中文说明">内容</div>',
       '<span title="a>b">中文</span>',
       '运行`cmd`$100脚本',
+      '焖面+烙饼+炒鸡蛋',
+      '读/写',
       '花费$5，$10和更多',
       '公式$\\text{中文}$结束',
       '中文`a``b`中文',

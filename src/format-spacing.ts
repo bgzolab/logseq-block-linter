@@ -64,6 +64,9 @@ const URL_CHARS = 'A-Za-z0-9\\-._~:/?#\\[\\]@!$&\'()*+,;=%'
 /** URL 里的分隔符：中文只有紧跟在这些字符后面时才算 URL 的一部分 */
 const URL_SEP_CHARS = '/?&=#'
 
+/** 单 `$...$` 里出现这些标点时，更像货币 / 正文而不是公式（`花费$5，$10`） */
+const MATH_TEXT_PUNCTUATION = /[，。；：！？、,]/
+
 const HAS_CJK = new RegExp(`[${CJK_CHARS}]`)
 const ENDS_WITH_CJK = new RegExp(`[${CJK_CHARS}]$`)
 const STARTS_WITH_CJK = new RegExp(`^[${CJK_CHARS}]`)
@@ -114,9 +117,9 @@ const RULES: ReadonlyArray<{ kind: TokenKind; pattern: RegExp }> = [
   {
     kind: 'html-tag',
     // 内联 HTML 标签（Logseq 会渲染）：`<u>`、`<br/>`、`<div title="中文">`。
-    // 标签名后必须是 `>` / `/` / 空白 + 属性名，避免把 `a<b且c>d`、`a<b 且 c>d`
-    // 这类比较表达式当成标签
-    pattern: /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][^>\n]*)?\/?>/y,
+    // 标签名后必须是 `>` / `/` / 空白 + 属性名；属性值按引号成对解析，
+    // 所以 `<span title="a>b">` 不会被第一个 `>` 截断
+    pattern: /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:](?:"[^"\n]*"|'[^'\n]*'|[^>"\n])*)?\/?>/y,
   },
   {
     kind: 'url',
@@ -163,6 +166,14 @@ function extendUrlToken(input: string, end: number): number {
   return i
 }
 
+/** 单 `$...$` 更像货币 / 正文而不是公式的情况 */
+function looksLikePlainDollarText(candidate: string): boolean {
+  if (candidate.startsWith('$$')) return false // 显示公式始终保护
+  if (candidate.includes('\\')) return false // `$\text{中文}$` 这类 TeX 命令
+
+  return HAS_CJK.test(candidate) || MATH_TEXT_PUNCTUATION.test(candidate)
+}
+
 function tokenize(input: string): Token[] {
   const tokens: Token[] = []
   let i = 0
@@ -175,9 +186,9 @@ function tokenize(input: string): Token[] {
       const m = rule.pattern.exec(input)
       if (!m || m[0].length === 0) continue
 
-      // 含中文的行内 $...$ 更可能是货币符号或正文（`花费$100，后来$50`），
-      // 别当公式吞掉；`$$...$$` 是显示公式，含中文也照常保护
-      if (rule.kind === 'math' && !m[0].startsWith('$$') && HAS_CJK.test(m[0])) continue
+      // 单 $ 之间夹着中文或中文标点时（`花费$100，后来$50`），更像货币 / 正文，
+      // 不当公式吞掉；含 `\` 的（如 `$\text{中文}$`）是明确的 TeX 公式，照常保护
+      if (rule.kind === 'math' && looksLikePlainDollarText(m[0])) continue
 
       const end =
         rule.kind === 'url' ? extendUrlToken(input, i + m[0].length) : i + m[0].length

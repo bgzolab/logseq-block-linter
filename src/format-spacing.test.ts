@@ -122,6 +122,20 @@ describe('formatSpacing: 内联 HTML 标签', () => {
   it('比较表达式不会被当成标签', () => {
     expect(formatSpacing('若a<b且c>d')).toBe('若 a<b 且 c>d')
   })
+
+  it('属性值里的 > 不会截断标签', () => {
+    expect(formatSpacing('<span title="a>b">中文</span>')).toBe('<span title="a>b"> 中文 </span>')
+    expect(formatSpacing("<span title='a>b'>中文</span>")).toBe("<span title='a>b'> 中文 </span>")
+  })
+})
+
+describe('formatSpacing: 相邻的受保护片段', () => {
+  it('紧邻的片段之间不补空格（和 [[a]][[b]] 保持一致）', () => {
+    expect(formatSpacing('中文`a``b`中文')).toBe('中文 `a``b` 中文')
+    expect(formatSpacing('嵌套<b>加粗<i>斜体</i></b>文字')).toBe(
+      '嵌套 <b> 加粗 <i> 斜体 </i></b> 文字'
+    )
+  })
 })
 
 describe('formatSpacing: 符号不会误伤（保持原样）', () => {
@@ -198,6 +212,17 @@ describe('formatSpacing: 受保护的语法片段', () => {
     expect(formatSpacing('价格是$5到$10之间')).toBe('价格是 $5 到 $10 之间')
   })
 
+  it('被标点隔开的相邻货币不会被配成公式', () => {
+    expect(formatSpacing('花费$5，$10和更多')).toBe('花费 $5，$10 和更多')
+    expect(formatSpacing('花费$5,$10和更多')).toBe('花费 $5,$10 和更多')
+  })
+
+  it('TeX 公式（含中文）照常保护', () => {
+    expect(formatSpacing('公式$\\text{中文是一个隐藏的公式}$结束')).toBe(
+      '公式 $\\text{中文是一个隐藏的公式}$ 结束'
+    )
+  })
+
   it('受保护片段的输出是幂等的', () => {
     const inputs = [
       '参考[[Logseq插件]]使用',
@@ -214,7 +239,11 @@ describe('formatSpacing: 受保护的语法片段', () => {
       '**加粗**中文',
       '看<u>下划线</u>文字',
       '<div title="中文说明">内容</div>',
+      '<span title="a>b">中文</span>',
       '运行`cmd`$100脚本',
+      '花费$5，$10和更多',
+      '公式$\\text{中文}$结束',
+      '中文`a``b`中文',
     ]
 
     for (const input of inputs) {

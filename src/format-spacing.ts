@@ -3,13 +3,15 @@
  *
  * 规则：
  *  - 中文与「英文 token」之间补一个空格
- *    - token = 连续的半角串（字母、数字、`+ - . _ / = ~` 等符号），以字母/数字或
- *      `(` `[` `{` `$` `+` `-` 这类前缀符号开头，且至少含一个字母/数字
+ *    - token = 一段连续的半角串，满足任一条件：
+ *      a) 以字母 / 数字或 `(` `[` `{` `$` `+` `-` 这类前缀符号开头，且至少含一个字母 / 数字
+ *      b) 整段都是运算 / 连接符号（`+` `-` `=` `/` `&` `@`）
  *    - 例：`使用API` → `使用 API`、`C++版本` → `C++ 版本`、`使用Node.js开发` → `使用 Node.js 开发`、
- *      `主键(id)` → `主键 (id)`、`价格$100` → `价格 $100`
+ *      `主键(id)` → `主键 (id)`、`价格$100` → `价格 $100`、`焖面+烙饼` → `焖面 + 烙饼`、`读/写` → `读 / 写`
  *  - 已有空格保持不变（不会合并连续空格，函数是幂等的）
- *  - 纯符号（`--`、`...`、`**`、`~~`）和 `/` `&` `#` 这类连接符不会触发补空格，
- *    所以 `读/写`、`中文,English`、`中文.内容`、`**加粗**`、`#标签` 都保持原样
+ *  - 标点（`,` `.` `:` `!` `?`）、纯标点串（`...`、`!!!`）、强调符（`*` `~` `^`）、
+ *    `#`（标签）与 `|`（表格分隔符）不触发补空格，所以 `中文,English`、`他说...然后`、
+ *    `**加粗**`、`#标签`、`|名称|数量|` 都保持原样
  *
  * 受保护的区域（内部文本永远不会被改写）：
  *  - 代码块 ```...```、行内代码 `...`
@@ -45,7 +47,8 @@ const TOKEN_BODY_SYMBOLS = '\\-_.+/=~^|&@$#%*<>(){}\\[\\]!?;:,\'"'
  * 可以作为 token 开头的半角符号：中文紧跟「符号 + 英文」时也补空格，
  * 例如 `主键(id)`、`价格$100`、`温度-5度`。
  *
- * 故意不含 `/`、`&`、`#` 这类连接符：`读/写`、`中文#话题`、`A&B` 不应该被拆开。
+ * 故意不含 `/` `&` `#` `|`：`/` `&` 直接连接英文时视为一体（`中文/English混排` 不动），
+ * `#` 是标签、`|` 是表格分隔符。
  */
 const TOKEN_PREFIX_SYMBOLS = '([{<>=+\\-*_^~$@'
 
@@ -65,7 +68,7 @@ const URL_CHARS = 'A-Za-z0-9\\-._~:/?#\\[\\]@!$&\'()*+,;=%'
 const URL_SEP_CHARS = '/?&=#'
 
 /** 单 `$...$` 里出现这些标点时，更像货币 / 正文而不是公式（`花费$5，$10`） */
-const MATH_TEXT_PUNCTUATION = /[，。；：！？、,]/
+const MATH_TEXT_PUNCTUATION = /[，。；：！？、,（）]/
 
 const HAS_CJK = new RegExp(`[${CJK_CHARS}]`)
 const ENDS_WITH_CJK = new RegExp(`[${CJK_CHARS}]$`)
@@ -116,10 +119,16 @@ const RULES: ReadonlyArray<{ kind: TokenKind; pattern: RegExp }> = [
   { kind: 'md-link', pattern: /!?\[[^\]\n]*\]\([^)\n]*\)/y },
   {
     kind: 'html-tag',
-    // 内联 HTML 标签（Logseq 会渲染）：`<u>`、`<br/>`、`<div title="中文">`。
+    // 内联 HTML 标签（Logseq 会渲染）：`<u>`、`<br />`、`<div title="中文">`。
     // 标签名后必须是 `>` / `/` / 空白 + 属性名；属性值按引号成对解析，
     // 所以 `<span title="a>b">` 不会被第一个 `>` 截断
-    pattern: /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:](?:"[^"\n]*"|'[^'\n]*'|[^>"\n])*)?\/?>/y,
+    pattern: /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:](?:"[^"\n]*"|'[^'\n]*'|[^>"\n])*)?\s*\/?>/y,
+  },
+  {
+    kind: 'html-tag',
+    // 引号没闭合的标签（手误）：`<div title="中文>`。只保护到下一个 `>`，避免空格
+    // 被注入属性值；`a<b且c>d`、`a<b 且 c>d` 这类比较式仍然不会被误判
+    pattern: /<\/?[A-Za-z][A-Za-z0-9-]*\s+[A-Za-z_:][^>\n]*>/y,
   },
   {
     kind: 'url',
@@ -166,10 +175,16 @@ function extendUrlToken(input: string, end: number): number {
   return i
 }
 
-/** 单 `$...$` 更像货币 / 正文而不是公式的情况 */
-function looksLikePlainDollarText(candidate: string): boolean {
+/**
+ * 单 `$...$` 更像货币 / 正文而不是公式的情况。
+ *
+ * `gluedToToken`：匹配结束后紧跟的还是半角字符（`价格$5 $10` 里 `$5 $` 后面是 `1`），
+ * 说明这个 `$` 还粘着后面的金额 / 正文，不是公式收尾。
+ */
+function looksLikePlainDollarText(candidate: string, gluedToToken: boolean): boolean {
   if (candidate.startsWith('$$')) return false // 显示公式始终保护
   if (candidate.includes('\\')) return false // `$\text{中文}$` 这类 TeX 命令
+  if (gluedToToken) return true
 
   return HAS_CJK.test(candidate) || MATH_TEXT_PUNCTUATION.test(candidate)
 }
@@ -186,9 +201,13 @@ function tokenize(input: string): Token[] {
       const m = rule.pattern.exec(input)
       if (!m || m[0].length === 0) continue
 
-      // 单 $ 之间夹着中文或中文标点时（`花费$100，后来$50`），更像货币 / 正文，
-      // 不当公式吞掉；含 `\` 的（如 `$\text{中文}$`）是明确的 TeX 公式，照常保护
-      if (rule.kind === 'math' && looksLikePlainDollarText(m[0])) continue
+      // 单 $ 之间夹着中文、中文标点，或后面还粘着半角内容时（`花费$5，$10`、`价格$5 $10`），
+      // 更像货币 / 正文，不当公式吞掉；含 `\` 的（如 `$\text{中文}$`）是明确的 TeX 公式，照常保护
+      if (rule.kind === 'math') {
+        const next = input[i + m[0].length]
+        const gluedToToken = next !== undefined && TOKEN_CHAR.test(next)
+        if (looksLikePlainDollarText(m[0], gluedToToken)) continue
+      }
 
       const end =
         rule.kind === 'url' ? extendUrlToken(input, i + m[0].length) : i + m[0].length
@@ -212,9 +231,13 @@ function tokenize(input: string): Token[] {
  * `焖面+烙饼` → `焖面 + 烙饼`、`读/写` → `读 / 写`。
  *
  * 故意不含容易误伤的符号：`*` `~` `^`（Markdown / Logseq 强调符）、`#`（标签）、
- * `$` `%`（货币、百分比，通常跟着数字）、`.` `,` `:` `!` `?`（中文里常用的标点）。
+ * `|`（表格分隔符）、`$` `%`（货币、百分比，通常跟着数字）、
+ * `.` `,` `:` `!` `?`（中文里常用的标点）。
  */
-const OPERATOR_TOKEN = /^[+\-=/&|@]+$/
+const OPERATOR_SYMBOLS = '\\-+=/&@'
+const OPERATOR_TOKEN = new RegExp(`^[${OPERATOR_SYMBOLS}]+$`)
+/** 以运算符号结尾（判断受保护片段前面要不要补空格） */
+const ENDS_WITH_OPERATOR = new RegExp(`[${OPERATOR_SYMBOLS}]+$`)
 
 /** 一段半角串是否算「英文 token」：纯运算符号，或以字母/数字（前缀符号）开头且含字母/数字 */
 function isLatinToken(run: string): boolean {
@@ -243,11 +266,11 @@ function startsWithCjkOrToken(text: string): boolean {
 /**
  * 在中文和「英文 token」之间补空格，不碰其他任何字符。
  *
- * 「英文 token」= 一段连续的半角串，以字母/数字（或前缀符号）开头、至少含一个字母/数字：
- * `Node.js`、`C++`、`README.md`、`(id)`、`$100`、`x86_64`……
+ * 「英文 token」= 一段连续的半角串：`Node.js`、`C++`、`README.md`、`(id)`、`$100`、`x86_64`，
+ * 或整段都是运算 / 连接符号（`+` `-` `=` `/` `&` `@`，如 `焖面+烙饼` → `焖面 + 烙饼`）。
  *
- * 纯符号（`--`、`...`、`**`、`~~`）不算 token，所以中文标点、Markdown 强调符、
- * 以及 `读/写` 这种「斜杠连接」都不会被拆开。函数是幂等的。
+ * 标点串（`...`、`!!!`）、强调符（`**`、`~~`、`^^`）和 `|` 不算 token，所以中文标点、
+ * Markdown 强调符和表格都不会被拆开。函数是幂等的。
  */
 function spacify(text: string): string {
   let out = ''
@@ -309,8 +332,10 @@ export function formatSpacing(input: string): string {
 
     out += spacify(segment)
 
-    // 中文和“英文单词”之间补空格
-    if (WORD_LIKE.has(token.kind) && ENDS_WITH_CJK.test(out)) out += ' '
+    // 中文 / 运算符号和「英文单词」之间补空格
+    if (WORD_LIKE.has(token.kind) && (ENDS_WITH_CJK.test(out) || ENDS_WITH_OPERATOR.test(out))) {
+      out += ' '
+    }
 
     out += token.text
     prevWordLike = WORD_LIKE.has(token.kind)

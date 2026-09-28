@@ -14,7 +14,7 @@
  * 受保护的区域（内部文本永远不会被改写）：
  *  - 代码块 ```...```、行内代码 `...`
  *  - 双链 [[...]]、块引用 ((...))
- *  - Markdown 链接 / 图片 [text](url)
+ *  - Markdown 链接 / 图片 [text](url)、内联 HTML 标签 <u> / <div title="...">
  *  - 裸 URL（http/https）
  *  - 公式 `$$...$$` / `$...$`（行内公式里含中文时不视为公式，避免把货币符号配成对）
  *  - 标签 #tag
@@ -77,6 +77,7 @@ type TokenKind =
   | 'wiki-link'
   | 'block-ref'
   | 'md-link'
+  | 'html-tag'
   | 'url'
   | 'math'
   | 'tag'
@@ -88,6 +89,7 @@ const WORD_LIKE = new Set<TokenKind>([
   'wiki-link',
   'block-ref',
   'md-link',
+  'html-tag',
   'url',
   'math',
 ])
@@ -109,6 +111,13 @@ const RULES: ReadonlyArray<{ kind: TokenKind; pattern: RegExp }> = [
   { kind: 'wiki-link', pattern: /\[\[[^\]\n]*\]\]/y },
   { kind: 'block-ref', pattern: /\(\([^)\n]*\)\)/y },
   { kind: 'md-link', pattern: /!?\[[^\]\n]*\]\([^)\n]*\)/y },
+  {
+    kind: 'html-tag',
+    // 内联 HTML 标签（Logseq 会渲染）：`<u>`、`<br/>`、`<div title="中文">`。
+    // 标签名后必须是 `>` / `/` / 空白 + 属性名，避免把 `a<b且c>d`、`a<b 且 c>d`
+    // 这类比较表达式当成标签
+    pattern: /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][^>\n]*)?\/?>/y,
+  },
   {
     kind: 'url',
     // 先匹配纯 ASCII 的 URL，再通过 extendUrlToken 把 /wiki/中文 这类中文路径吞进来
@@ -194,6 +203,22 @@ function isLatinToken(run: string): boolean {
 }
 
 /**
+ * 这段文本开头是不是「英文 token」（字母/数字或前缀符号开头，且含字母/数字）。
+ *
+ * `(备注)` 这种括号里全是中文的不算，避免 `中文`x`(备注)` 被补出多余空格。
+ */
+function startsWithLatinToken(text: string): boolean {
+  let i = 0
+  while (i < text.length && TOKEN_CHAR.test(text[i] as string)) i += 1
+  return isLatinToken(text.slice(0, i))
+}
+
+/** 受保护片段后面是否要紧跟中文或英文 token（决定要不要补空格） */
+function startsWithCjkOrToken(text: string): boolean {
+  return STARTS_WITH_CJK.test(text) || startsWithLatinToken(text)
+}
+
+/**
  * 在中文和「英文 token」之间补空格，不碰其他任何字符。
  *
  * 「英文 token」= 一段连续的半角串，以字母/数字（或前缀符号）开头、至少含一个字母/数字：
@@ -257,8 +282,8 @@ export function formatSpacing(input: string): string {
   for (const token of tokens) {
     const segment = input.slice(pos, token.start)
 
-    // 上一个受保护片段是“英文单词”时，它和后面的中文之间也要补空格
-    if (prevWordLike && STARTS_WITH_CJK.test(segment)) out += ' '
+    // 上一个受保护片段是“英文单词”时，它和后面的中文 / 英文 token 之间也要补空格
+    if (prevWordLike && startsWithCjkOrToken(segment)) out += ' '
 
     out += spacify(segment)
 
@@ -271,7 +296,7 @@ export function formatSpacing(input: string): string {
   }
 
   const tail = input.slice(pos)
-  if (prevWordLike && STARTS_WITH_CJK.test(tail)) out += ' '
+  if (prevWordLike && startsWithCjkOrToken(tail)) out += ' '
   out += spacify(tail)
 
   return out

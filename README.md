@@ -25,7 +25,7 @@
 - **保护语法片段**，不会破坏 block 里的 Logseq / Markdown 语法：
   - 代码块 ` ``` `、行内代码 `` ` ``
   - 双链 `[[页面]]`、块引用 `((uuid))`
-  - Markdown 链接 `[文字](url)`、裸 URL（含中文路径，如 `https://zh.wikipedia.org/wiki/中文`）
+  - Markdown 链接 `[文字](url)`、内联 HTML 标签（`<u>下划线</u>`、`<div title="中文说明">`）、裸 URL（含中文路径，如 `https://zh.wikipedia.org/wiki/中文`）
   - 行内公式 `$...$`
   - 标签 `#标签`、行首属性名 `key::`
 - **三种触发方式**：快捷键（默认 Windows/Linux `Ctrl+S`、macOS `Cmd+S`）、斜杠命令、右键 block 小圆点

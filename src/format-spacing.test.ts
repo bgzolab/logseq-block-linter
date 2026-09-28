@@ -85,6 +85,43 @@ describe('formatSpacing: 中文与英文符号之间', () => {
     expect(formatSpacing('使用 Node.js 开发')).toBe('使用 Node.js 开发')
     expect(formatSpacing('主键 (id)')).toBe('主键 (id)')
   })
+
+  it('= / @ / _ 前缀', () => {
+    expect(formatSpacing('结果=value值')).toBe('结果 =value 值')
+    expect(formatSpacing('联系@someone吧')).toBe('联系 @someone 吧')
+    expect(formatSpacing('中文__bold__中文')).toBe('中文 __bold__ 中文')
+  })
+})
+
+describe('formatSpacing: 受保护片段与英文 token 相邻', () => {
+  it('片段两侧的 token 都会补空格（对称）', () => {
+    expect(formatSpacing('运行`cmd`$100脚本')).toBe('运行 `cmd` $100 脚本')
+    expect(formatSpacing('中文`x`$100中文')).toBe('中文 `x` $100 中文')
+    expect(formatSpacing('中文[[Link]]English')).toBe('中文 [[Link]] English')
+  })
+
+  it('括号里全是中文时不当成 token', () => {
+    expect(formatSpacing('中文`x`(备注)')).toBe('中文 `x`(备注)')
+  })
+})
+
+describe('formatSpacing: 内联 HTML 标签', () => {
+  it('标签内部（含属性值）永不改写', () => {
+    expect(formatSpacing('<div title="中文说明">内容</div>')).toBe('<div title="中文说明"> 内容 </div>')
+    expect(formatSpacing('见<a href="https://example.com">链接</a>说明')).toBe(
+      '见 <a href="https://example.com"> 链接 </a> 说明'
+    )
+  })
+
+  it('标签与文字之间补空格，标签外不受影响', () => {
+    expect(formatSpacing('看<u>下划线</u>文字')).toBe('看 <u> 下划线 </u> 文字')
+    expect(formatSpacing('中文<strong>加粗</strong>结束')).toBe('中文 <strong> 加粗 </strong> 结束')
+    expect(formatSpacing('第一行<br>第二行')).toBe('第一行 <br> 第二行')
+  })
+
+  it('比较表达式不会被当成标签', () => {
+    expect(formatSpacing('若a<b且c>d')).toBe('若 a<b 且 c>d')
+  })
 })
 
 describe('formatSpacing: 符号不会误伤（保持原样）', () => {
@@ -104,6 +141,12 @@ describe('formatSpacing: 符号不会误伤（保持原样）', () => {
     for (const input of ['**加粗**中文', '*斜体*文字', '~~删除~~中文', '^^高亮^^中文', '中文#话题']) {
       expect(formatSpacing(input), input).toBe(input)
     }
+  })
+
+  it('强调符里包英文时两侧会补空格（这是有意的）', () => {
+    expect(formatSpacing('详见~~NOTE~~说明')).toBe('详见 ~~NOTE~~ 说明')
+    expect(formatSpacing('中文**bold**中文')).toBe('中文 **bold** 中文')
+    expect(formatSpacing('中文^^hl^^中文')).toBe('中文 ^^hl^^ 中文')
   })
 })
 
@@ -169,6 +212,9 @@ describe('formatSpacing: 受保护的语法片段', () => {
       '中文(English)混排',
       '读/写与中文,English',
       '**加粗**中文',
+      '看<u>下划线</u>文字',
+      '<div title="中文说明">内容</div>',
+      '运行`cmd`$100脚本',
     ]
 
     for (const input of inputs) {

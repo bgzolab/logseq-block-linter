@@ -2,14 +2,19 @@
  * 中英文空格格式化（纯函数，无副作用，方便单测）
  *
  * 规则：
- *  - CJK 字符 + 拉丁字母 / 数字 / `%` → 补一个空格
- *  - 拉丁字母 / 数字 / `%` + CJK 字符 → 补一个空格
- *  - 已有的空格保持不变（不会合并连续空格，函数是幂等的）
+ *  - 中文与「英文 token」之间补一个空格
+ *    - token = 连续的半角串（字母、数字、`+ - . _ / = ~` 等符号），以字母/数字或
+ *      `(` `[` `{` `$` `+` `-` 这类前缀符号开头，且至少含一个字母/数字
+ *    - 例：`使用API` → `使用 API`、`C++版本` → `C++ 版本`、`使用Node.js开发` → `使用 Node.js 开发`、
+ *      `主键(id)` → `主键 (id)`、`价格$100` → `价格 $100`
+ *  - 已有空格保持不变（不会合并连续空格，函数是幂等的）
+ *  - 纯符号（`--`、`...`、`**`、`~~`）和 `/` `&` `#` 这类连接符不会触发补空格，
+ *    所以 `读/写`、`中文,English`、`中文.内容`、`**加粗**`、`#标签` 都保持原样
  *
  * 受保护的区域（内部文本永远不会被改写）：
  *  - 代码块 ```...```、行内代码 `...`
  *  - 双链 [[...]]、块引用 ((...))
- *  - Markdown 链接 / 图片 [text](url)
+ *  - Markdown 链接 / 图片 [text](url)、内联 HTML 标签 <u> / <div title="...">
  *  - 裸 URL（http/https）
  *  - 公式 `$$...$$` / `$...$`（行内公式里含中文时不视为公式，避免把货币符号配成对）
  *  - 标签 #tag
@@ -24,11 +29,34 @@
 const CJK_CHARS =
   '\\u3005\\u3007\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uf900-\\ufaff'
 
-/** 会被补空格的拉丁字符 */
-const LATIN_CHARS = 'A-Za-z0-9%'
+/** 单词字符：字母和数字 */
+const WORD_CHARS = 'A-Za-z0-9'
+
+/**
+ * 「英文 token」里允许出现的半角符号。
+ *
+ * 逗号、句号、冒号、问号这些中文里也常用的标点放在这里，是因为它们
+ * 可以出现在 token 中间 / 结尾（`Node.js`、`C++`、`100%`、`README.md`），
+ * 但不能作为 token 开头——所以 `中文,English`、`中文.内容` 不会被误加空格。
+ */
+const TOKEN_BODY_SYMBOLS = '\\-_.+/=~^|&@$#%*<>(){}\\[\\]!?;:,\'"'
+
+/**
+ * 可以作为 token 开头的半角符号：中文紧跟「符号 + 英文」时也补空格，
+ * 例如 `主键(id)`、`价格$100`、`温度-5度`。
+ *
+ * 故意不含 `/`、`&`、`#` 这类连接符：`读/写`、`中文#话题`、`A&B` 不应该被拆开。
+ */
+const TOKEN_PREFIX_SYMBOLS = '([{<>=+\\-*_^~$@'
+
+/** 「英文 token」允许出现的任意字符 */
+const TOKEN_CHAR = new RegExp(`[${WORD_CHARS}${TOKEN_BODY_SYMBOLS}]`)
+/** 「英文 token」允许的开头字符 */
+const TOKEN_START = new RegExp(`[${WORD_CHARS}${TOKEN_PREFIX_SYMBOLS}]`)
+const HAS_WORD_CHAR = new RegExp(`[${WORD_CHARS}]`)
 
 /** 标签 `#tag` 中 `#` 之后允许出现的字符 */
-const TAG_CHARS = `${LATIN_CHARS.replace('%', '')}_${CJK_CHARS}/-`
+const TAG_CHARS = `${WORD_CHARS}_${CJK_CHARS}/-`
 
 /** URL 中允许出现的 ASCII 字符 */
 const URL_CHARS = 'A-Za-z0-9\\-._~:/?#\\[\\]@!$&\'()*+,;=%'
@@ -36,8 +64,8 @@ const URL_CHARS = 'A-Za-z0-9\\-._~:/?#\\[\\]@!$&\'()*+,;=%'
 /** URL 里的分隔符：中文只有紧跟在这些字符后面时才算 URL 的一部分 */
 const URL_SEP_CHARS = '/?&=#'
 
-const CJK_TO_LATIN = new RegExp(`([${CJK_CHARS}])([${LATIN_CHARS}])`, 'g')
-const LATIN_TO_CJK = new RegExp(`([${LATIN_CHARS}])([${CJK_CHARS}])`, 'g')
+/** 单 `$...$` 里出现这些标点时，更像货币 / 正文而不是公式（`花费$5，$10`） */
+const MATH_TEXT_PUNCTUATION = /[，。；：！？、,]/
 
 const HAS_CJK = new RegExp(`[${CJK_CHARS}]`)
 const ENDS_WITH_CJK = new RegExp(`[${CJK_CHARS}]$`)
@@ -52,6 +80,7 @@ type TokenKind =
   | 'wiki-link'
   | 'block-ref'
   | 'md-link'
+  | 'html-tag'
   | 'url'
   | 'math'
   | 'tag'
@@ -63,6 +92,7 @@ const WORD_LIKE = new Set<TokenKind>([
   'wiki-link',
   'block-ref',
   'md-link',
+  'html-tag',
   'url',
   'math',
 ])
@@ -84,6 +114,13 @@ const RULES: ReadonlyArray<{ kind: TokenKind; pattern: RegExp }> = [
   { kind: 'wiki-link', pattern: /\[\[[^\]\n]*\]\]/y },
   { kind: 'block-ref', pattern: /\(\([^)\n]*\)\)/y },
   { kind: 'md-link', pattern: /!?\[[^\]\n]*\]\([^)\n]*\)/y },
+  {
+    kind: 'html-tag',
+    // 内联 HTML 标签（Logseq 会渲染）：`<u>`、`<br/>`、`<div title="中文">`。
+    // 标签名后必须是 `>` / `/` / 空白 + 属性名；属性值按引号成对解析，
+    // 所以 `<span title="a>b">` 不会被第一个 `>` 截断
+    pattern: /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:](?:"[^"\n]*"|'[^'\n]*'|[^>"\n])*)?\/?>/y,
+  },
   {
     kind: 'url',
     // 先匹配纯 ASCII 的 URL，再通过 extendUrlToken 把 /wiki/中文 这类中文路径吞进来
@@ -129,6 +166,14 @@ function extendUrlToken(input: string, end: number): number {
   return i
 }
 
+/** 单 `$...$` 更像货币 / 正文而不是公式的情况 */
+function looksLikePlainDollarText(candidate: string): boolean {
+  if (candidate.startsWith('$$')) return false // 显示公式始终保护
+  if (candidate.includes('\\')) return false // `$\text{中文}$` 这类 TeX 命令
+
+  return HAS_CJK.test(candidate) || MATH_TEXT_PUNCTUATION.test(candidate)
+}
+
 function tokenize(input: string): Token[] {
   const tokens: Token[] = []
   let i = 0
@@ -141,9 +186,9 @@ function tokenize(input: string): Token[] {
       const m = rule.pattern.exec(input)
       if (!m || m[0].length === 0) continue
 
-      // 含中文的行内 $...$ 更可能是货币符号或正文（`花费$100，后来$50`），
-      // 别当公式吞掉；`$$...$$` 是显示公式，含中文也照常保护
-      if (rule.kind === 'math' && !m[0].startsWith('$$') && HAS_CJK.test(m[0])) continue
+      // 单 $ 之间夹着中文或中文标点时（`花费$100，后来$50`），更像货币 / 正文，
+      // 不当公式吞掉；含 `\` 的（如 `$\text{中文}$`）是明确的 TeX 公式，照常保护
+      if (rule.kind === 'math' && looksLikePlainDollarText(m[0])) continue
 
       const end =
         rule.kind === 'url' ? extendUrlToken(input, i + m[0].length) : i + m[0].length
@@ -162,9 +207,70 @@ function tokenize(input: string): Token[] {
   return tokens
 }
 
-/** 只做「中英文之间补空格」，不碰其他任何字符 */
+/** 一段半角串是否算「英文 token」：以字母/数字（或 `(` `$` `+` 这类前缀符号）开头，且至少含一个字母/数字 */
+function isLatinToken(run: string): boolean {
+  const first = run[0]
+  return first !== undefined && TOKEN_START.test(first) && HAS_WORD_CHAR.test(run)
+}
+
+/**
+ * 这段文本开头是不是「英文 token」（字母/数字或前缀符号开头，且含字母/数字）。
+ *
+ * `(备注)` 这种括号里全是中文的不算，避免 `中文`x`(备注)` 被补出多余空格。
+ */
+function startsWithLatinToken(text: string): boolean {
+  let i = 0
+  while (i < text.length && TOKEN_CHAR.test(text[i] as string)) i += 1
+  return isLatinToken(text.slice(0, i))
+}
+
+/** 受保护片段后面是否要紧跟中文或英文 token（决定要不要补空格） */
+function startsWithCjkOrToken(text: string): boolean {
+  return STARTS_WITH_CJK.test(text) || startsWithLatinToken(text)
+}
+
+/**
+ * 在中文和「英文 token」之间补空格，不碰其他任何字符。
+ *
+ * 「英文 token」= 一段连续的半角串，以字母/数字（或前缀符号）开头、至少含一个字母/数字：
+ * `Node.js`、`C++`、`README.md`、`(id)`、`$100`、`x86_64`……
+ *
+ * 纯符号（`--`、`...`、`**`、`~~`）不算 token，所以中文标点、Markdown 强调符、
+ * 以及 `读/写` 这种「斜杠连接」都不会被拆开。函数是幂等的。
+ */
 function spacify(text: string): string {
-  return text.replace(CJK_TO_LATIN, '$1 $2').replace(LATIN_TO_CJK, '$1 $2')
+  let out = ''
+  let i = 0
+
+  while (i < text.length) {
+    const char = text[i] as string
+
+    if (!TOKEN_CHAR.test(char)) {
+      out += char
+      i += 1
+      continue
+    }
+
+    const start = i
+    while (i < text.length && TOKEN_CHAR.test(text[i] as string)) i += 1
+
+    const run = text.slice(start, i)
+
+    if (!isLatinToken(run)) {
+      out += run
+      continue
+    }
+
+    // 中文和英文 token 之间补空格
+    if (ENDS_WITH_CJK.test(out)) out += ' '
+
+    out += run
+
+    const next = text[i]
+    if (next !== undefined && HAS_CJK.test(next)) out += ' '
+  }
+
+  return out
 }
 
 /**
@@ -187,8 +293,8 @@ export function formatSpacing(input: string): string {
   for (const token of tokens) {
     const segment = input.slice(pos, token.start)
 
-    // 上一个受保护片段是“英文单词”时，它和后面的中文之间也要补空格
-    if (prevWordLike && STARTS_WITH_CJK.test(segment)) out += ' '
+    // 上一个受保护片段是“英文单词”时，它和后面的中文 / 英文 token 之间也要补空格
+    if (prevWordLike && startsWithCjkOrToken(segment)) out += ' '
 
     out += spacify(segment)
 
@@ -201,7 +307,7 @@ export function formatSpacing(input: string): string {
   }
 
   const tail = input.slice(pos)
-  if (prevWordLike && STARTS_WITH_CJK.test(tail)) out += ' '
+  if (prevWordLike && startsWithCjkOrToken(tail)) out += ' '
   out += spacify(tail)
 
   return out

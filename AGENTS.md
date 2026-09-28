@@ -37,9 +37,10 @@ Node 22（见 `.github/workflows/test.yml`）。**改完代码必须 `npm test` 
 2. `dist/` 里必须有一份 `package.json`（由 `vite.config.ts` 的 `distPluginManifest()` 生成），否则直接加载 `dist/` 会报 `Illegal Logseq plugin package`；Logseq 是读「所选文件夹」里的 package.json 的。
 3. `package.json` 的 `logseq.id` 必须保留：外部（unpacked）插件缺少 id 时，Logseq 会**改写**这个文件。
 4. 快捷键以 `mode: 'global'` 注册（编辑 block 时也要能触发），所以任何「裸键 / 纯 Shift」绑定都会在用户打字时劫持输入。`src/settings.ts` 里的校验规则（必须有一个非 Shift 修饰键，或单独 `f1`~`f12`；拒绝只有修饰键、分段重复）是有意为之，**不要放宽**，改动请同步更新 `src/settings.test.ts`。
-5. `formatSpacing` 必须保持**幂等**（已有空格不动、不合并连续空格），且受保护片段（代码块 / 行内代码 / 双链 / 块引用 / Markdown 链接 / URL / 标签 / 属性名 / 公式）内部永不改写。改规则时同时补 `src/format-spacing.test.ts` 用例。
+5. `formatSpacing` 必须保持**幂等**（已有空格不动、不合并连续空格），且受保护片段（代码块 / 行内代码 / 双链 / 块引用 / Markdown 链接 / URL / 标签 / 属性名 / 公式 / 内联 HTML 标签）内部永不改写。注意：HTML 标签只保证标签本身不被改写，标签**元素内部**的边界会补空格（`<u> 下划线 </u>`）；相邻的受保护片段之间不补空格。改规则时同时补 `src/format-spacing.test.ts` 用例。
 6. 快捷键热更新依赖 Logseq 宿主**内部** API：`unregister_plugin_simple_command`（经 `logseq._execCallableAPIAsync`）。公开 API 没有 unregister，所以保留 try/catch 和「失败就降级为重新加载插件后生效」的行为，不要改成硬依赖。
 7. 设置变更必须保留**去抖 + 串行**（见 `src/main.ts` 的 `scheduleShortcutUpdate` / `queueShortcutUpdate`）：Logseq 的字符串设置每敲一个字符都会触发 `onSettingsChanged`，并发处理会重复注册同一个命令。
+8. 「英文 token」的符号集合（`src/format-spacing.ts` 的 `TOKEN_BODY_SYMBOLS` / `TOKEN_PREFIX_SYMBOLS`）是刻意收窄的启发式：token 必须**含至少一个字母/数字**，纯符号串（`...`、`--`、`**`）不算；`,` `.` `:` `!` `?` 这类标点和 `/` `&` `#` 这类连接符不能作为 token 的触发开头。强调符包住**英文**时两侧会补空格（`详见~~NOTE~~说明` → `详见 ~~NOTE~~ 说明`），包住中文时不会（`**加粗**中文` 保持原样）。内联 HTML 标签是受保护片段，改这块前先看 `src/format-spacing.test.ts` 里「符号不会误伤」「受保护片段与英文 token 相邻」「内联 HTML 标签」三组用例。
 
 ## 测试约定
 

@@ -2,11 +2,16 @@ import '@logseq/libs'
 import type { BlockEntity } from '@logseq/libs/dist/LSPlugin'
 
 import { formatSpacing } from './format-spacing'
+import { resolveShortcut, settingsSchema, type PluginSettings } from './settings'
 
-/** 命令的唯一标识，用于命令面板 / 快捷键注册 */
+/** 命令面板 / 快捷键的唯一标识 */
 const FORMAT_COMMAND_KEY = 'block-linter-format-block-spacing'
-
 const LABEL = '格式化中英文空格'
+/** 兜底用的插件 id，正常情况下从 logseq.baseInfo 读取 */
+const FALLBACK_PLUGIN_ID = 'logseq-block-linter'
+
+/** 已经注册的快捷键（null = 只注册了命令面板入口） */
+let registered: { binding: string | null } | null = null
 
 /** 优先取多选状态下的 blocks，否则取光标所在的当前 block */
 async function resolveTargetBlocks(): Promise<BlockEntity[]> {
@@ -49,18 +54,78 @@ async function formatSelectionOrCurrentBlock(): Promise<void> {
   }
 }
 
-function main(): void {
-  // 1. Ctrl+S / 命令面板
+/** 注册命令面板命令（快捷键为 null 时只出现在命令面板里） */
+function registerCommand(binding: string | null): void {
   logseq.App.registerCommandPalette(
     {
       key: FORMAT_COMMAND_KEY,
       label: `${LABEL}（当前 block）`,
-      keybinding: { binding: 'ctrl+s', mode: 'global' },
+      ...(binding ? { keybinding: { binding, mode: 'global' as const } } : {}),
     },
     async () => {
       await formatSelectionOrCurrentBlock()
     }
   )
+
+  registered = { binding }
+}
+
+/**
+ * 撤销上一次注册，让旧快捷键立即失效。
+ *
+ * Logseq 没有公开的 unregister API，这里调用宿主内部的
+ * `unregister_plugin_simple_command`；万一将来失效，也只是旧快捷键多留一会儿，
+ * 重新加载插件就会清理干净。
+ */
+async function unregisterCommand(): Promise<void> {
+  const internal = logseq as unknown as {
+    _execCallableAPIAsync?: (method: string, ...args: unknown[]) => Promise<unknown>
+  }
+  if (!internal._execCallableAPIAsync) return
+
+  const pluginId = logseq.baseInfo?.id ?? FALLBACK_PLUGIN_ID
+
+  try {
+    await internal._execCallableAPIAsync(
+      'unregister_plugin_simple_command',
+      pluginId,
+      FORMAT_COMMAND_KEY
+    )
+  } catch (error) {
+    console.warn('[block-linter] 撤销旧快捷键失败', error)
+  }
+}
+
+/** 按当前设置注册快捷键；设置变化时调用，立即生效 */
+async function applyShortcut(settings: PluginSettings | undefined, notify = false): Promise<void> {
+  const { binding, invalid } = resolveShortcut(settings)
+  const changed = registered === null || registered.binding !== binding
+
+  if (changed) {
+    if (registered) await unregisterCommand()
+    registerCommand(binding)
+    console.debug(`[block-linter] shortcut: ${binding ?? 'disabled'}`)
+  }
+
+  if (invalid) {
+    await logseq.UI.showMsg(
+      `Block Linter: 快捷键「${invalid}」无法识别，已回退到 ${binding}`,
+      'warning'
+    )
+  } else if (notify && changed) {
+    await logseq.UI.showMsg(
+      binding ? `Block Linter: 快捷键已更新为 ${binding}` : 'Block Linter: 快捷键已关闭',
+      'success'
+    )
+  }
+}
+
+function main(): void {
+  // 1. 快捷键（跟随插件设置）
+  void applyShortcut(logseq.settings as PluginSettings | undefined)
+  logseq.onSettingsChanged((next: PluginSettings) => {
+    void applyShortcut(next, true)
+  })
 
   // 2. 斜杠命令
   logseq.Editor.registerSlashCommand(LABEL, () => formatSelectionOrCurrentBlock())
@@ -75,4 +140,6 @@ function main(): void {
   console.log('[block-linter] plugin ready')
 }
 
+// 设置要在 ready 之前注册，这样 logseq.settings 里会带上默认值
+logseq.useSettingsSchema(settingsSchema)
 logseq.ready(main).catch(console.error)

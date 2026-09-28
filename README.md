@@ -23,20 +23,31 @@
   - Markdown 链接 `[文字](url)`、裸 URL（含中文路径，如 `https://zh.wikipedia.org/wiki/中文`）
   - 行内公式 `$...$`
   - 标签 `#标签`、行首属性名 `key::`
-- **三种触发方式**：快捷键 `Ctrl+S`、斜杠命令、右键 block 小圆点
+- **三种触发方式**：快捷键（默认 Windows/Linux `Ctrl+S`、macOS `Cmd+S`）、斜杠命令、右键 block 小圆点
+- **可配置**：插件设置页面里可以改快捷键、关掉快捷键
 - 支持多选多个 block 批量格式化
 
 ## 使用
 
 | 方式 | 操作 |
 | --- | --- |
-| 快捷键 | 在编辑或选中 block 时按 `Ctrl+S`（macOS 上也是 `Ctrl`，不是 `Cmd`） |
+| 快捷键 | 在编辑或选中 block 时按 `Ctrl+S`（macOS 上是 `Cmd+S`） |
 | 斜杠命令 | 在 block 中输入 `/格式化中英文空格` |
 | 右键菜单 | 右键 block 前面的小圆点 → `格式化中英文空格` |
-| 命令面板 | `Ctrl+K` 搜索「格式化中英文空格」 |
+| 命令面板 | `Ctrl+K` / `Cmd+K` 搜索「格式化中英文空格」 |
 
-> 想把快捷键改成 `Cmd+S` / `Ctrl+Shift+S`，修改 `src/main.ts` 里的 `keybinding.binding`
-> （`mod+s` 在 macOS 上是 `Cmd+S`、其他平台是 `Ctrl+S`），重新构建即可。
+## 设置
+
+`Logseq 设置 → 插件（Plugins）→ Block Linter` 打开插件设置页面：
+
+| 设置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| 启用快捷键 | 开 | 关掉后只能用斜杠命令 / 右键菜单 / 命令面板触发 |
+| 快捷键 | `mod+s` | `mod` 按平台解析：Windows / Linux = `Ctrl`，macOS = `Cmd` |
+
+`mod+s` 就是 Windows/Linux 的 `Ctrl+S`、macOS 的 `Cmd+S`。也可以填 `ctrl+alt+s`、
+`mod+shift+s`、`meta+enter` 这类组合键（用 `+` 连接，只支持单步组合，不支持 `g d` 这种连按），
+**改完立即生效**，不需要重载插件；填了无法识别的写法会回退到默认快捷键并弹提示。
 
 ## 安装
 
@@ -71,11 +82,16 @@ npm test        # vitest 单测（格式化规则 + 插件注册逻辑）
 src/
   format-spacing.ts        # 纯函数：中英文补空格（含语法片段保护）
   format-spacing.test.ts   # 格式化规则单测
-  main.ts                  # 插件入口：注册快捷键 / 斜杠命令 / 右键菜单
+  settings.ts              # 插件设置 schema + 快捷键解析/校验
+  settings.test.ts         # 设置解析单测
+  main.ts                  # 插件入口：设置页面 / 快捷键（含热更新）/ 斜杠命令 / 右键菜单
   main.test.ts             # 插件逻辑单测（mock logseq API）
 index.html                 # vite 入口
-vite.config.ts             # base: './'（Logseq 以 file:// 加载插件）
+vite.config.ts             # base: './'（Logseq 以 file:// 加载插件）+ 往 dist 写 package.json
 ```
+
+> 快捷键热更新用到 Logseq 宿主内部的 `unregister_plugin_simple_command`（公开 API 里没有
+> unregister），调用失败时会自动降级成「重新加载插件后生效」。
 
 ## 已知限制
 

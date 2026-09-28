@@ -95,6 +95,29 @@ describe('formatSpacing: 受保护的语法片段', () => {
     expect(formatSpacing('公式$x_1 + y_1$计算')).toBe('公式 $x_1 + y_1$ 计算')
   })
 
+  it('货币符号不会被配成公式', () => {
+    expect(formatSpacing('花费$100，后来$50买了个新的')).toBe('花费$100，后来$50 买了个新的')
+    expect(formatSpacing('价格是$5到$10之间')).toBe('价格是$5 到$10 之间')
+  })
+
+  it('受保护片段的输出是幂等的', () => {
+    const inputs = [
+      '参考[[Logseq插件]]使用',
+      '运行`npm run test`命令',
+      '见((1234-5678))说明',
+      '查看[官方文档](https://docs.example.com/中文)吧',
+      '访问https://example.com/中文路径试试',
+      '公式$x_1 + y_1$计算',
+      'title:: 中文English',
+      '这是 #标签 和 #tag',
+    ]
+
+    for (const input of inputs) {
+      const once = formatSpacing(input)
+      expect(formatSpacing(once), input).toBe(once)
+    }
+  })
+
   it('行首属性名不改写，属性值正常格式化', () => {
     expect(formatSpacing('title:: 中文English')).toBe('title:: 中文 English')
     expect(formatSpacing('作者:: 张三ZhangSan')).toBe('作者:: 张三 ZhangSan')

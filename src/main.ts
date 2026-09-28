@@ -22,36 +22,61 @@ async function resolveTargetBlocks(): Promise<BlockEntity[]> {
   return current ? [current] : []
 }
 
-/** 格式化给定的 blocks，返回实际被修改的数量 */
-async function formatBlocks(blocks: readonly BlockEntity[]): Promise<number> {
+/** 格式化给定的 blocks，返回修改成功 / 失败的数量 */
+async function formatBlocks(
+  blocks: readonly BlockEntity[]
+): Promise<{ changed: number; failed: number }> {
   let changed = 0
+  let failed = 0
 
   for (const block of blocks) {
     const content = block.content ?? ''
     const formatted = formatSpacing(content)
     if (formatted === content) continue
 
-    await logseq.Editor.updateBlock(block.uuid, formatted)
-    changed += 1
+    try {
+      await logseq.Editor.updateBlock(block.uuid, formatted)
+      changed += 1
+    } catch (error) {
+      // 单个 block 失败不影响其余 block
+      failed += 1
+      console.warn(`[block-linter] 更新 block ${block.uuid} 失败`, error)
+    }
   }
 
-  return changed
+  return { changed, failed }
 }
 
-/** 主入口：格式化选中的 blocks（或光标所在的 block） */
-async function formatSelectionOrCurrentBlock(): Promise<void> {
-  const blocks = await resolveTargetBlocks()
+/** 统一的执行 + 提示：快捷键 / 斜杠命令 / 右键菜单都走这里 */
+async function formatTargets(resolveTargets: () => Promise<BlockEntity[]>): Promise<void> {
+  const blocks = await resolveTargets()
   if (blocks.length === 0) {
     await logseq.UI.showMsg('Block Linter: 没有找到可格式化的 block', 'warning')
     return
   }
 
-  const changed = await formatBlocks(blocks)
-  if (changed === 0) {
+  const { changed, failed } = await formatBlocks(blocks)
+
+  if (failed > 0) {
+    await logseq.UI.showMsg(`Block Linter: 已格式化 ${changed} 个，失败 ${failed} 个`, 'error')
+  } else if (changed === 0) {
     await logseq.UI.showMsg('Block Linter: 已经是规范的格式', 'success', { timeout: 1500 })
   } else {
     console.debug(`[block-linter] formatted ${changed} block(s)`)
   }
+}
+
+/** 主入口：格式化选中的 blocks（或光标所在的 block） */
+async function formatSelectionOrCurrentBlock(): Promise<void> {
+  await formatTargets(resolveTargetBlocks)
+}
+
+/** 右键菜单入口：只格式化指定的 block */
+async function formatBlockByUuid(uuid: string): Promise<void> {
+  await formatTargets(async () => {
+    const block = await logseq.Editor.getBlock(uuid)
+    return block ? [block] : []
+  })
 }
 
 /** 注册命令面板命令（快捷键为 null 时只出现在命令面板里） */
@@ -120,22 +145,45 @@ async function applyShortcut(settings: PluginSettings | undefined, notify = fals
   }
 }
 
+/** Logseq 里字符串设置会随每次击键触发变更，这里做去抖 + 串行化，避免重复注册 */
+const SHORTCUT_UPDATE_DEBOUNCE_MS = 300
+
+/** 设置变更的队列：保证撤销 / 注册不会并发执行 */
+let shortcutUpdates: Promise<void> = Promise.resolve()
+let shortcutTimer: ReturnType<typeof setTimeout> | undefined
+
+/** 把一次快捷键更新排进队列（后一次设置覆盖前一次） */
+function queueShortcutUpdate(settings: PluginSettings | undefined, notify: boolean): void {
+  shortcutUpdates = shortcutUpdates
+    .then(() => applyShortcut(settings, notify))
+    .catch((error) => {
+      console.warn('[block-linter] 更新快捷键失败', error)
+    })
+}
+
+/** 设置变更时调用：去抖后再更新，避免逐键输入产生一堆中间状态 */
+function scheduleShortcutUpdate(): void {
+  if (shortcutTimer !== undefined) clearTimeout(shortcutTimer)
+
+  shortcutTimer = setTimeout(() => {
+    shortcutTimer = undefined
+    // 用最新的设置，而不是触发时的那一份
+    queueShortcutUpdate(logseq.settings as PluginSettings | undefined, true)
+  }, SHORTCUT_UPDATE_DEBOUNCE_MS)
+}
+
 function main(): void {
   // 1. 快捷键（跟随插件设置）
-  void applyShortcut(logseq.settings as PluginSettings | undefined)
-  logseq.onSettingsChanged((next: PluginSettings) => {
-    void applyShortcut(next, true)
+  queueShortcutUpdate(logseq.settings as PluginSettings | undefined, false)
+  logseq.onSettingsChanged(() => {
+    scheduleShortcutUpdate()
   })
 
   // 2. 斜杠命令
   logseq.Editor.registerSlashCommand(LABEL, () => formatSelectionOrCurrentBlock())
 
   // 3. 右键 block 前的小圆点
-  logseq.Editor.registerBlockContextMenuItem(LABEL, async ({ uuid }) => {
-    const block = await logseq.Editor.getBlock(uuid)
-    if (!block) return
-    await formatBlocks([block])
-  })
+  logseq.Editor.registerBlockContextMenuItem(LABEL, ({ uuid }) => formatBlockByUuid(uuid))
 
   console.log('[block-linter] plugin ready')
 }

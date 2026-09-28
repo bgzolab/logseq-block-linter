@@ -13,8 +13,13 @@ type PaletteOptions = {
 const paletteCommands: Array<{ opts: PaletteOptions; handler: Handler }> = []
 const slashCommands: Array<{ tag: string; handler: Handler }> = []
 const contextMenuItems: Array<{ label: string; handler: Handler }> = []
-const settingsHandlers: Array<(next: Record<string, unknown>) => void> = []
+const settingsHandlers: Array<() => void> = []
 const unregisterCalls: unknown[][] = []
+
+/** 让测试可以模拟内部 API 失败 */
+let unregisterFails = false
+/** 让测试可以模拟某个 block 更新失败 */
+let updateBlockFailsFor: string | null = null
 
 const state = {
   settings: {} as Record<string, unknown>,
@@ -30,10 +35,11 @@ const logseq = {
     return state.settings
   },
   useSettingsSchema: vi.fn(),
-  onSettingsChanged: (cb: (next: Record<string, unknown>) => void) => {
+  onSettingsChanged: (cb: () => void) => {
     settingsHandlers.push(cb)
   },
   _execCallableAPIAsync: async (method: string, ...args: unknown[]) => {
+    if (unregisterFails) throw new Error('boom')
     unregisterCalls.push([method, ...args])
   },
   ready: (cb: () => void) => {
@@ -62,6 +68,7 @@ const logseq = {
     getCurrentBlock: async () => state.currentBlock,
     getBlock: async (uuid: string) => state.blocks.get(uuid) ?? null,
     updateBlock: async (uuid: string, content: string) => {
+      if (updateBlockFailsFor === uuid) throw new Error('boom')
       state.blocks.set(uuid, { uuid, content })
     },
   },
@@ -82,9 +89,20 @@ async function loadPlugin(settings: Record<string, unknown> = {}): Promise<void>
   contextMenuItems.length = 0
   settingsHandlers.length = 0
   unregisterCalls.length = 0
+  unregisterFails = false
+  updateBlockFailsFor = null
 
   vi.resetModules()
   await import('./main')
+
+  // 初始注册是排在微任务队列里的
+  await vi.waitFor(() => expect(paletteCommands.length).toBeGreaterThan(0))
+}
+
+/** 模拟用户在设置页面里改动设置（Logseq 会逐次触发 onSettingsChanged） */
+function changeSettings(settings: Record<string, unknown>): void {
+  state.settings = settings
+  settingsHandlers[0]?.()
 }
 
 const lastPaletteCommand = () => paletteCommands[paletteCommands.length - 1]
@@ -93,7 +111,10 @@ describe('插件注册', () => {
   it('注册了设置页面', async () => {
     await loadPlugin()
     expect(logseq.useSettingsSchema).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ key: 'enableShortcut' }), expect.objectContaining({ key: 'shortcut' })])
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'enableShortcut' }),
+        expect.objectContaining({ key: 'shortcut' }),
+      ])
     )
   })
 
@@ -122,7 +143,7 @@ describe('快捷键设置', () => {
 
   it('改设置后立即换绑：先撤销旧注册，再注册新快捷键', async () => {
     await loadPlugin()
-    settingsHandlers[0]?.({ enableShortcut: true, shortcut: 'ctrl+shift+s' })
+    changeSettings({ enableShortcut: true, shortcut: 'ctrl+shift+s' })
     await vi.waitFor(() => expect(paletteCommands).toHaveLength(2))
 
     expect(unregisterCalls[0]).toEqual([
@@ -134,13 +155,47 @@ describe('快捷键设置', () => {
     expect(state.messages.at(-1)?.content).toContain('ctrl+shift+s')
   })
 
+  it('连续多次改设置只会重新注册一次（去抖 + 串行）', async () => {
+    await loadPlugin()
+    changeSettings({ shortcut: 'ctrl' })
+    changeSettings({ shortcut: 'ctrl+' })
+    changeSettings({ shortcut: 'ctrl+shift' })
+    changeSettings({ shortcut: 'ctrl+shift+s' })
+
+    await vi.waitFor(() => expect(paletteCommands).toHaveLength(2))
+    // 给潜在的重复注册留一点时间
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    expect(paletteCommands).toHaveLength(2)
+    expect(lastPaletteCommand()?.opts.keybinding).toEqual({ binding: 'ctrl+shift+s', mode: 'global' })
+    expect(unregisterCalls).toHaveLength(1)
+  })
+
+  it('内部 unregister 失败时仍能注册新快捷键', async () => {
+    await loadPlugin()
+    unregisterFails = true
+    changeSettings({ shortcut: 'ctrl+shift+s' })
+
+    await vi.waitFor(() => expect(paletteCommands).toHaveLength(2))
+    expect(lastPaletteCommand()?.opts.keybinding).toEqual({ binding: 'ctrl+shift+s', mode: 'global' })
+  })
+
   it('非法快捷键回退到默认值并给出 warning', async () => {
     await loadPlugin()
-    settingsHandlers[0]?.({ shortcut: 'ctrl++s' })
+    changeSettings({ shortcut: 'ctrl++s' })
     await vi.waitFor(() => expect(state.messages).toHaveLength(1))
 
     expect(lastPaletteCommand()?.opts.keybinding).toEqual({ binding: 'mod+s', mode: 'global' })
     expect(state.messages.at(-1)?.status).toBe('warning')
+  })
+
+  it('无修饰键的快捷键按非法处理', async () => {
+    await loadPlugin()
+    changeSettings({ shortcut: 'space' })
+    await vi.waitFor(() => expect(state.messages).toHaveLength(1))
+
+    expect(lastPaletteCommand()?.opts.keybinding).toEqual({ binding: 'mod+s', mode: 'global' })
+    expect(state.messages.at(-1)?.content).toContain('space')
   })
 })
 
@@ -194,7 +249,26 @@ describe('格式化当前 block', () => {
     expect(state.messages[0]?.content).toContain('没有找到')
   })
 
-  it('右键菜单只格式化目标 block', async () => {
+  it('单个 block 失败不会中断其余 block，并提示失败数量', async () => {
+    await loadPlugin()
+    const blocks = [
+      { uuid: 'b1', content: '第一test' },
+      { uuid: 'b2', content: '第二test' },
+    ]
+    state.selectedBlocks = blocks
+    blocks.forEach((b) => state.blocks.set(b.uuid, b))
+
+    updateBlockFailsFor = 'b1'
+
+    await lastPaletteCommand()?.handler()
+
+    expect(state.blocks.get('b1')?.content).toBe('第一test')
+    expect(state.blocks.get('b2')?.content).toBe('第二 test')
+    expect(state.messages.at(-1)?.status).toBe('error')
+    expect(state.messages.at(-1)?.content).toContain('失败')
+  })
+
+  it('右键菜单格式化目标 block，失败时有提示', async () => {
     await loadPlugin()
     state.blocks.set('b1', { uuid: 'b1', content: '第一test' })
     state.blocks.set('b2', { uuid: 'b2', content: '第二test' })
@@ -203,5 +277,9 @@ describe('格式化当前 block', () => {
 
     expect(state.blocks.get('b1')?.content).toBe('第一test')
     expect(state.blocks.get('b2')?.content).toBe('第二 test')
+
+    updateBlockFailsFor = 'b1'
+    await contextMenuItems[0]?.handler({ uuid: 'b1' })
+    expect(state.messages.at(-1)?.status).toBe('error')
   })
 })

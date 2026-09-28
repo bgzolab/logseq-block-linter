@@ -34,7 +34,7 @@
 | 快捷键 | 在编辑或选中 block 时按 `Ctrl+S`（macOS 上是 `Cmd+S`） |
 | 斜杠命令 | 在 block 中输入 `/格式化中英文空格` |
 | 右键菜单 | 右键 block 前面的小圆点 → `格式化中英文空格` |
-| 命令面板 | `Ctrl+K` / `Cmd+K` 搜索「格式化中英文空格」 |
+| 命令面板 | 命令面板（默认 `mod+shift+p`）里搜索「格式化中英文空格」 |
 
 ## 设置
 
@@ -48,6 +48,9 @@
 `mod+s` 就是 Windows/Linux 的 `Ctrl+S`、macOS 的 `Cmd+S`。也可以填 `ctrl+alt+s`、
 `mod+shift+s`、`meta+enter` 这类组合键（用 `+` 连接，只支持单步组合，不支持 `g d` 这种连按），
 **改完立即生效**，不需要重载插件；填了无法识别的写法会回退到默认快捷键并弹提示。
+
+> 出于安全考虑，快捷键必须带修饰键（`mod` / `ctrl` / `meta` / `alt` / `shift`，或单独的 `f1`~`f12`）。
+> 像 `space`、`enter`、`s` 这种会被拒绝——插件以 `global` 模式注册，单键会在你打字时劫持输入。
 
 ## 安装
 
@@ -99,6 +102,7 @@ vite.config.ts             # base: './'（Logseq 以 file:// 加载插件）+ �
 - 只处理当前 block / 选中的 blocks，不会递归处理子 block
 - 中文标点和英文之间不补空格（`你好,hello` 保持原样）
 - `#标签` 和代码块内部完全不动，避免破坏标签名和代码
+- Markdown 链接的 URL 里如果含 `)`（如 `https://en.wikipedia.org/wiki/Foo_(bar)`），只会匹配到第一个 `)`，链接后面的中文不会补空格（需要更完整的链接解析，尚未实现）
 
 ## Contributing
 

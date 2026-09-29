@@ -57,6 +57,7 @@ Node 22（见 `.github/workflows/test.yml`）。**改完代码必须 `npm test` 
   - 因此：权限配置写到全局路径 `~/.config/opencode/opencode.json`，**不要**写进仓库目录（否则它把配置文件本身提交上去）；`use_github_token: true` + `contents: read`，只给 `pull-requests: write` / `issues: write` 用于发评论。
   - 这两条是刻意的，改动 workflow 时请保留。
   - 评审依赖 PR 分支：**PR 合并并删除分支后就无法重跑评审**（`gh run rerun` 会因为取不到分支而失败）。想保留重跑能力，合并时就不要删分支；另外 opencode 服务偶发超时（评论里是 `upstream service timeout` / `UnknownError`），那种评论不是评审结论，不能当作通过。
+  - **合并 PR 后不要删除分支**：`gh pr merge` 一律不加 `--delete-branch`，远端和本地分支都留着当备份（也是评审能否重跑的前提）。
 
 ## 约定
 

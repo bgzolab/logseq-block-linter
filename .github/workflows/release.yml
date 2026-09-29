@@ -1,0 +1,106 @@
+name: release
+
+# 在 GitHub 上基于 tag 创建并发布 release 后，构建插件产物并上传到该 release。
+# 也可以手动触发（workflow_dispatch）给指定的 tag 补传产物。
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要上传到哪个 release（tag 名，例如 v0.1.0）'
+        required: true
+
+permissions:
+  contents: write # 上传 release 资产需要写权限
+
+# 手动补传和 release 事件同时跑时，串行执行，避免两个 run 交错覆盖同一批资产
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      ZIP_NAME: logseq-block-linter-${{ github.event.release.tag_name || inputs.tag }}.zip
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Validate tag
+        run: |
+          set -euo pipefail
+          if [[ ! "${TAG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::不支持的 tag 格式: '${TAG}'（只允许 A-Za-z0-9._- ；手动触发时请填 v0.1.0 这类 tag 名，不要填 refs/tags/...）"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check version matches tag
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG_BASE="$(printf '%s' "${TAG}" | sed -E 's/^v//; s/[-+].*$//')"
+          PKG_BASE="$(printf '%s' "${PKG_VERSION}" | sed -E 's/^v//; s/[-+].*$//')"
+          if [ "${TAG_BASE}" != "${PKG_BASE}" ]; then
+            echo "::error::package.json 的 version（${PKG_VERSION}）与 tag（${TAG}）不一致，先把 version 改成 ${TAG_BASE} 再发 release"
+            exit 1
+          fi
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Package plugin
+        run: |
+          set -euo pipefail
+          DIR="logseq-block-linter-${TAG}"
+          mkdir -p "staging/${DIR}"
+          # 解压后就是一个可以直接「Load unpacked plugin」的插件目录
+          cp package.json logo.svg README.md LICENCE "staging/${DIR}/"
+          cp -r dist "staging/${DIR}/dist"
+          (cd staging && zip -rq "../${ZIP_NAME}" "${DIR}")
+          sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
+          ls -lh "${ZIP_NAME}" "${ZIP_NAME}.sha256"
+
+      # 先存一份 workflow artifact，即使下面上传 release 失败也能在 Actions 页面下载
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: |
+            ${{ env.ZIP_NAME }}
+            ${{ env.ZIP_NAME }}.sha256
+          if-no-files-found: error
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${TAG}" "${ZIP_NAME}" "${ZIP_NAME}.sha256" --clobber
+
+      - name: Summary
+        run: |
+          {
+            echo "### Release assets"
+            echo
+            echo "| 文件 | 说明 |"
+            echo "| --- | --- |"
+            echo "| \`${ZIP_NAME}\` | 解压后得到插件目录（\`package.json\` + \`dist/\`），Logseq 里 Load unpacked plugin 选该目录 |"
+            echo "| \`${ZIP_NAME}.sha256\` | 校验和 |"
+          } >> "$GITHUB_STEP_SUMMARY"

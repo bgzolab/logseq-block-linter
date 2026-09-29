@@ -104,6 +104,16 @@ vite.config.ts             # base: './'（Logseq 以 file:// 加载插件）+ �
 > 快捷键热更新用到 Logseq 宿主内部的 `unregister_plugin_simple_command`（公开 API 里没有
 > unregister），调用失败时会自动降级成「重新加载插件后生效」。
 
+## 发版
+
+1. 把 `package.json` 的 `version` 改成与 tag 一致（workflow 会校验，不一致直接失败）
+2. 打 tag 并推送：`git tag v0.0.2 && git push origin v0.0.2`
+3. GitHub → `Releases` → `Draft a new release` → 选该 tag → `Publish release`
+
+`.github/workflows/release.yml` 会自动 `npm test` + `npm run build`，把
+`logseq-block-linter-<tag>.zip`（解压即插件目录：`package.json` + `dist/`）和 `.sha256`
+上传到该 release 的 Assets；也可以在 Actions 里手动触发补传（填 tag 名）。
+
 ## 已知限制
 
 - 只格式化**整个 block**，不支持只格式化光标选中的一段文字

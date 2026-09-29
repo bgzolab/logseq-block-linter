@@ -2,6 +2,8 @@ name: release
 
 # 在 GitHub 上基于 tag 创建并发布 release 后，构建插件产物并上传到该 release。
 # 也可以手动触发（workflow_dispatch）给指定的 tag 补传产物。
+#
+# 注意：release 事件只认默认分支（main）上的 workflow，所以本文件必须在 main 上。
 on:
   release:
     types: [published]
@@ -14,7 +16,7 @@ on:
 permissions:
   contents: write # 上传 release 资产需要写权限
 
-# 手动补传和 release 事件同时跑时，串行执行，避免两个 run 交错覆盖同一批资产
+# 手动补传和 release 事件同时跑时串行执行，避免两个 run 交错覆盖同一批资产
 concurrency:
   group: release-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
@@ -24,18 +26,33 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
-      ZIP_NAME: logseq-block-linter-${{ github.event.release.tag_name || inputs.tag }}.zip
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
 
+      # 一次算好 TAG / 派生名，后面的步骤统一引用，避免多处重复拼字符串
       - name: Validate tag
         run: |
           set -euo pipefail
-          if [[ ! "${TAG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            echo "::error::不支持的 tag 格式: '${TAG}'（只允许 A-Za-z0-9._- ；手动触发时请填 v0.1.0 这类 tag 名，不要填 refs/tags/...）"
+          # 不接受以 `-` / `.` 开头的 tag：`-x` 会被 `gh` 当成命令行选项，`.x` 也容易出意外
+          if [[ ! "${TAG}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::不支持的 tag 格式: '${TAG}'（要求字母/数字开头，只含 A-Za-z0-9._- ；手动触发时填 v0.1.0 这类 tag 名，不要填 refs/tags/...）"
+            exit 1
+          fi
+          echo "ZIP_NAME=logseq-block-linter-${TAG}.zip" >> "$GITHUB_ENV"
+          echo "PLUGIN_DIR=logseq-block-linter-${TAG}" >> "$GITHUB_ENV"
+
+      # 放在 npm ci 之前：版本对不上是最常见的失败路径，用 runner 自带的 node 秒级退出
+      - name: Check version matches tag
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG_BASE="$(printf '%s' "${TAG}" | sed -E 's/^v//; s/[-+].*$//')"
+          PKG_BASE="$(printf '%s' "${PKG_VERSION}" | sed -E 's/^v//; s/[-+].*$//')"
+          if [ "${TAG_BASE}" != "${PKG_BASE}" ]; then
+            echo "::error::package.json 的 version（${PKG_VERSION}）与 tag（${TAG}）不一致，先把 version 改成 ${TAG_BASE} 再发 release"
             exit 1
           fi
 
@@ -48,17 +65,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check version matches tag
-        run: |
-          set -euo pipefail
-          PKG_VERSION="$(node -p "require('./package.json').version")"
-          TAG_BASE="$(printf '%s' "${TAG}" | sed -E 's/^v//; s/[-+].*$//')"
-          PKG_BASE="$(printf '%s' "${PKG_VERSION}" | sed -E 's/^v//; s/[-+].*$//')"
-          if [ "${TAG_BASE}" != "${PKG_BASE}" ]; then
-            echo "::error::package.json 的 version（${PKG_VERSION}）与 tag（${TAG}）不一致，先把 version 改成 ${TAG_BASE} 再发 release"
-            exit 1
-          fi
-
       - name: Test
         run: npm test
 
@@ -68,12 +74,11 @@ jobs:
       - name: Package plugin
         run: |
           set -euo pipefail
-          DIR="logseq-block-linter-${TAG}"
-          mkdir -p "staging/${DIR}"
+          mkdir -p "staging/${PLUGIN_DIR}"
           # 解压后就是一个可以直接「Load unpacked plugin」的插件目录
-          cp package.json logo.svg README.md LICENCE "staging/${DIR}/"
-          cp -r dist "staging/${DIR}/dist"
-          (cd staging && zip -rq "../${ZIP_NAME}" "${DIR}")
+          cp package.json logo.svg README.md LICENCE "staging/${PLUGIN_DIR}/"
+          cp -r dist "staging/${PLUGIN_DIR}/dist"
+          (cd staging && zip -rq "../${ZIP_NAME}" "${PLUGIN_DIR}")
           sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
           ls -lh "${ZIP_NAME}" "${ZIP_NAME}.sha256"
 
